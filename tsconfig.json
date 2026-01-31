@@ -1,19 +1,21 @@
 {
   "compilerOptions": {
-    "target": "esnext",
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,
-    "baseUrl": ".",
+    "declaration": true,
+    "types": ["node"],
     "paths": {
-      // 告诉 TS：导入这个包时，实际去读这个文件
       "@opencode-ai/plugin": ["./node_modules/@opencode-ai/plugin/dist/index.d.ts"]
-    },
-    "types": ["bun"]
+    }
   },
-  "include": ["src/**/*", "index.ts"]
+  "include": ["index.ts", "src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

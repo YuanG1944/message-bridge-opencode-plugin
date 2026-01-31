@@ -5,8 +5,13 @@ import { LOADING_EMOJI } from './constants';
 
 const sessionMap = new Map<string, string>();
 
+// Exporting this map so index.ts can check permissions based on session ownership
+export const sessionOwnerMap = new Map<string, string>();
+
 export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => {
-  return async (chatId: string, text: string, messageId: string) => {
+  return async (chatId: string, text: string, messageId: string, senderId: string) => {
+    console.log(`[Bridge] Handling message from User: ${senderId} | Chat: ${chatId}`);
+
     if (text.trim().toLowerCase() === 'ping') {
       await feishu.sendMessage(chatId, 'Pong! ⚡️');
       return;
@@ -22,6 +27,9 @@ export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => 
 
       if (!sessionId) {
         const uniqueSessionTitle = `[Feishu] ${chatId}`;
+        console.log(
+          `[Bridge] Session not found in cache. Searching/Creating for title: "${uniqueSessionTitle}"...`,
+        );
 
         try {
           if (api.getSessionList) {
@@ -32,11 +40,14 @@ export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => 
 
             if (existSession) {
               sessionId = existSession.id;
-              console.log(`[Bridge] ♻️ 复用历史会话: ${sessionId} (${uniqueSessionTitle})`);
+              console.log(`[Bridge] ♻️ Reusing existing session: ${sessionId}`);
             }
           }
         } catch (e) {
-          console.warn('[Bridge] 获取会话列表失败，将直接创建新会话', e);
+          console.warn(
+            '[Bridge] Failed to retrieve session list, proceeding to create new session.',
+            e,
+          );
         }
 
         if (!sessionId) {
@@ -46,6 +57,7 @@ export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => 
             const reqData = {
               body: {
                 title: uniqueSessionTitle,
+                mode: 'plan',
               },
             };
 
@@ -53,19 +65,27 @@ export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => 
             sessionId = res.id || res.data?.id;
 
             if (sessionId) {
-              console.log(`[Bridge] ✨ 创建新会话: ${sessionId}`);
+              console.log(`[Bridge] ✨ Created new session: ${sessionId}`);
             }
           } catch (err) {
             console.error('[Bridge] Create Session Failed:', err);
-            await feishu.sendMessage(chatId, '❌ 创建会话失败');
+            await feishu.sendMessage(chatId, '❌ Failed to create session');
             return;
           }
         }
 
-        if (sessionId) sessionMap.set(chatId, sessionId);
+        if (sessionId) {
+          sessionMap.set(chatId, sessionId);
+          sessionOwnerMap.set(sessionId, senderId);
+        }
+      } else {
+        // Update owner map even on cache hit to ensure permission check works after restart/reconnect
+        sessionOwnerMap.set(sessionId, senderId);
       }
 
-      console.log(`[Bridge] 🚀 发送指令: "${text}"`);
+      console.log(
+        `[Bridge] 🚀 Sending prompt to OpenCode: "${text.length > 50 ? text.substring(0, 50) + '...' : text}"`,
+      );
       const parts: TextPartInput[] = [{ type: 'text', text: text }];
 
       try {
@@ -76,18 +96,26 @@ export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => 
           body: { parts: parts },
         });
       } catch (sendErr: any) {
-        console.error('[Bridge] ❌ 发送接口报错:', sendErr);
+        console.error('[Bridge] ❌ API Prompt Error:', sendErr);
 
         if (JSON.stringify(sendErr).includes('404') || sendErr.status === 404) {
           sessionMap.delete(chatId);
-          await feishu.sendMessage(chatId, '⚠️ 当前会话已失效，正在重置，请重试');
+          await feishu.sendMessage(
+            chatId,
+            '⚠️ Session expired or invalid. Resetting connection. Please try again.',
+          );
         } else {
-          await feishu.sendMessage(chatId, `❌ 发送失败: ${sendErr.message || 'API Error'}`);
+          await feishu.sendMessage(
+            chatId,
+            `❌ Send Failed: ${sendErr.message || 'Unknown API Error'}`,
+          );
         }
         return;
       }
 
       if (!api.getMessages) return;
+
+      console.log(`[Bridge] ⏳ Polling for response (Session: ${sessionId})...`);
 
       let attempts = 0;
       const maxAttempts = 60;
@@ -97,7 +125,8 @@ export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => 
           attempts++;
           if (attempts > maxAttempts) {
             clearInterval(pollTimer);
-            await feishu.sendMessage(chatId, '❌ AI 响应超时');
+            console.warn('[Bridge] Polling timed out.');
+            await feishu.sendMessage(chatId, '❌ AI Response Timeout');
             resolve();
             return;
           }
@@ -123,21 +152,24 @@ export const createMessageHandler = (api: OpenCodeApi, feishu: FeishuClient) => 
                     replyText = lastItem.parts
                       .filter((p: any) => p.type === 'text')
                       .map((p: any) => p.text)
-                      .join('\n');
+                      .join('\n')
+                      .trim();
                   }
 
-                  console.log(`[Bridge] ✅ 收到回复 (${replyText.length} chars)`);
-                  feishu.sendMessage(chatId, replyText || '(AI 回复了空内容)'); // 这里不需要 await
+                  console.log(`[Bridge] ✅ Response received (${replyText.length} chars)`);
+                  feishu.sendMessage(chatId, replyText || '(AI response was empty)');
                   resolve();
                 } else if (info.error) {
                   clearInterval(pollTimer);
                   const errMsg = typeof info.error === 'string' ? info.error : info.error.message;
                   console.error('[Bridge] AI Error:', info.error);
-                  feishu.sendMessage(chatId, `❌ AI 错误: ${errMsg}`);
+                  feishu.sendMessage(chatId, `❌ AI Error: ${errMsg}`);
                   resolve();
                 }
               });
-          } catch (e) {}
+          } catch (e) {
+            // silent retry
+          }
         }, 1500);
       });
     } catch (error: any) {

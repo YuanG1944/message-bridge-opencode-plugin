@@ -6,7 +6,6 @@ import type {
   SessionListData,
 } from '@opencode-ai/sdk';
 
-// ✅ 关键修改：使用 Omit<T, 'url'> 去掉 url 字段
 export interface OpenCodeApi {
   createSession: (data: Omit<SessionCreateData, 'url'>) => Promise<any>;
   promptSession: (data: Omit<SessionPromptData, 'url'>) => Promise<any>;
