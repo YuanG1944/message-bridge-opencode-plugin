@@ -25,6 +25,7 @@ const sessionCache = new Map<string, string>(); // adapterKey:chatId -> sessionI
 const sessionToAdapterKey = new Map<string, string>(); // sessionId -> adapterKey
 const chatAgent = new Map<string, string>(); // adapterKey:chatId -> agent
 const chatSessionList = new Map<string, Array<{ id: string; title: string }>>();
+const chatAgentList = new Map<string, Array<{ id: string; name: string }>>();
 
 let isListenerStarted = false;
 let shouldStopListener = false;
@@ -300,6 +301,7 @@ export function stopGlobalEventListener() {
   sessionToAdapterKey.clear();
   chatAgent.clear();
   chatSessionList.clear();
+  chatAgentList.clear();
 }
 
 /**
@@ -399,6 +401,34 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
         }
       };
 
+      const resolveAgentName = async (
+        name: string
+      ): Promise<{ id: string; name: string } | null> => {
+        try {
+          const res = await api.app.agents();
+          const data = (res as any)?.data ?? res;
+          const list = Array.isArray(data) ? data : [];
+          if (list.length === 0) return null;
+          const lower = name.toLowerCase();
+
+          const exact = list.find(
+            (a: any) => a?.name === name || a?.id === name
+          );
+          if (exact) return { id: exact.id, name: exact.name };
+
+          const fuzzy = list.find(
+            (a: any) =>
+              String(a?.name || '').toLowerCase().includes(lower) ||
+              String(a?.id || '').toLowerCase().includes(lower)
+          );
+          if (fuzzy) return { id: fuzzy.id, name: fuzzy.name };
+
+          return null;
+        } catch {
+          return null;
+        }
+      };
+
       if (slash) {
         if (normalizedCommand === 'help') {
           const res = await api.command.list();
@@ -465,8 +495,47 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
         }
 
         if (normalizedCommand === 'agent' && targetAgent) {
-          chatAgent.set(cacheKey, targetAgent);
-          await sendCommandMessage(`✅ 已切换 Agent: ${targetAgent}`);
+          if (/^\d+$/.test(targetAgent)) {
+            const list = chatAgentList.get(cacheKey) || [];
+            const idx = Number(targetAgent) - 1;
+            if (idx < 0 || idx >= list.length) {
+              await sendCommandMessage(`❌ 无效序号: ${targetAgent}`);
+              return;
+            }
+            const agent = list[idx];
+            chatAgent.set(cacheKey, agent.name || agent.id);
+            await sendCommandMessage(`✅ 已切换 Agent: ${agent.name || agent.id}`);
+            return;
+          }
+
+          const agent = await resolveAgentName(targetAgent);
+          if (!agent) {
+            await sendCommandMessage(`❌ 未找到 Agent: ${targetAgent}`);
+            return;
+          }
+          chatAgent.set(cacheKey, agent.name || agent.id);
+          await sendCommandMessage(`✅ 已切换 Agent: ${agent.name || agent.id}`);
+          return;
+        }
+
+        if (normalizedCommand === 'agent' && !targetAgent) {
+          const res = await api.app.agents();
+          const data = (res as any)?.data ?? res;
+          const list = Array.isArray(data) ? data : [];
+          if (list.length === 0) {
+            await sendCommandMessage('暂无可用 Agent。');
+            return;
+          }
+          const agents = list.slice(0, 20).map((a: any) => ({
+            id: a?.id,
+            name: a?.name || a?.id,
+          }));
+          chatAgentList.set(cacheKey, agents);
+          const lines = ['## Command', '### Agents', '请输入 /agent <序号> 切换：'];
+          agents.forEach((a, idx) => {
+            lines.push(`${idx + 1}. ${a.name}`);
+          });
+          await sendCommandMessage(lines.join('\n'));
           return;
         }
 

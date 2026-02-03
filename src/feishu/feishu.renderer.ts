@@ -190,7 +190,19 @@ function renderModelsCommand(command: string): any[] | null {
 
   if (providers.length > 0) {
     providers.forEach(p => {
-      elements.push(larkMd(`**${p.title}**\n${p.models || '-'}`));
+      const models = (p.models || '')
+        .split(',')
+        .map(m => m.trim())
+        .filter(Boolean);
+      if (models.length === 0) {
+        elements.push(larkMd(`**${p.title}**\n-`));
+        return;
+      }
+      elements.push(
+        larkMd(
+          `**${p.title}**\n${models.map(m => `- ${m}`).join('\n')}`
+        )
+      );
     });
   }
 
