@@ -139,29 +139,11 @@ function renderHelpCommand(command: string): any[] | null {
   if (commandLines.length === 0) return null;
 
   elements.push(larkMd('**Help**'));
-  elements.push(larkMd(commandLines.map(l => `- ${l}`).join('\n')));
-
-  const buttons: any[] = [];
-  commandLines.forEach(l => {
-    const cmd = l.split(/\s+/)[0];
-    buttons.push({
-      tag: 'button',
-      text: { tag: 'plain_text', content: cmd },
-      type: 'primary',
-      value: { cmd },
-    });
-  });
-
-  const rows: any[] = [];
-  const maxPerRow = 4;
-  for (let i = 0; i < Math.min(buttons.length, 12); i += maxPerRow) {
-    rows.push({
-      tag: 'action',
-      actions: buttons.slice(i, i + maxPerRow),
-    });
-  }
-
-  elements.push(...rows);
+  elements.push(
+    larkMd(
+      ['```', ...commandLines.map(l => l.replace(/^-\s*/, '')), '```'].join('\n')
+    )
+  );
   return elements;
 }
 

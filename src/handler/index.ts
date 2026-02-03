@@ -24,6 +24,7 @@ const msgBuffers = new Map<string, any>(); // messageId -> buffer (MessageBuffer
 const sessionCache = new Map<string, string>(); // adapterKey:chatId -> sessionId
 const sessionToAdapterKey = new Map<string, string>(); // sessionId -> adapterKey
 const chatAgent = new Map<string, string>(); // adapterKey:chatId -> agent
+const chatSessionList = new Map<string, Array<{ id: string; title: string }>>();
 
 let isListenerStarted = false;
 let shouldStopListener = false;
@@ -298,6 +299,7 @@ export function stopGlobalEventListener() {
   sessionCache.clear();
   sessionToAdapterKey.clear();
   chatAgent.clear();
+  chatSessionList.clear();
 }
 
 /**
@@ -405,7 +407,7 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
           lines.push('/help - 查看命令与用法');
           lines.push('/models - 查看可用模型');
           lines.push('/new - 新建会话并切换');
-          lines.push('/sessions - 列出会话（用 /sessions <id> 切换）');
+          lines.push('/sessions - 列出会话（用 /sessions <id> 或 /sessions <序号> 切换）');
           lines.push('/share - 分享当前会话');
           lines.push('/unshare - 取消分享');
           lines.push('/compact - 压缩/总结当前会话');
@@ -472,10 +474,14 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
             await adapter.sendMessage(chatId, '暂无会话，请使用 /new 创建。');
             return;
           }
-          const lines = ['📚 会话列表（回复 /sessions <id> 切换）：'];
-          sessions.slice(0, 20).forEach((s: any, idx: number) => {
-            const updated = s?.time?.updated ? new Date(s.time.updated).toLocaleString() : '-';
-            lines.push(`${idx + 1}. ${s?.title || 'Untitled'} | ${s?.id} | ${updated}`);
+          const list = sessions.slice(0, 20).map((s: any) => ({
+            id: s?.id,
+            title: s?.title || 'Untitled',
+          }));
+          chatSessionList.set(cacheKey, list);
+          const lines = ['## Command', '### Sessions', '请输入 /sessions <序号> 切换：'];
+          list.forEach((s, idx) => {
+            lines.push(`${idx + 1}. ${s.title}`);
           });
           await adapter.sendMessage(chatId, lines.join('\n'));
           return;
@@ -504,11 +510,22 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
         sessionToCtx.set(sessionId, { chatId, senderId });
 
         if (normalizedCommand === 'sessions' && targetSessionId) {
-          sessionCache.set(cacheKey, targetSessionId);
-          sessionToAdapterKey.set(targetSessionId, adapterKey);
-          sessionToCtx.set(targetSessionId, { chatId, senderId });
+          let targetId = targetSessionId;
+          if (/^\d+$/.test(targetSessionId)) {
+            const list = chatSessionList.get(cacheKey) || [];
+            const idx = Number(targetSessionId) - 1;
+            if (idx >= 0 && idx < list.length) {
+              targetId = list[idx].id;
+            } else {
+              await adapter.sendMessage(chatId, `❌ 无效序号: ${targetSessionId}`);
+              return;
+            }
+          }
+          sessionCache.set(cacheKey, targetId);
+          sessionToAdapterKey.set(targetId, adapterKey);
+          sessionToCtx.set(targetId, { chatId, senderId });
           chatAgent.delete(cacheKey);
-          await adapter.sendMessage(chatId, `✅ 已切换到会话: ${targetSessionId}`);
+          await adapter.sendMessage(chatId, `✅ 已切换到会话: ${targetId}`);
           return;
         }
 

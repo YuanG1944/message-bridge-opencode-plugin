@@ -45,7 +45,6 @@ export class FeishuClient {
   private config: FeishuConfig;
   private wsClient: lark.WSClient | null = null;
   private httpServer: http.Server | null = null;
-  private cardServer: http.Server | null = null;
   private callbackUrl?: string;
   private callbackPort?: number;
 
@@ -213,13 +212,6 @@ export class FeishuClient {
     await this.wsClient.start({ eventDispatcher: dispatcher });
     globalState.__feishu_ws_client_instance = this.wsClient;
     console.log('✅ Feishu WebSocket Connected!');
-
-    // In WS mode, start a lightweight card-action webhook if port is provided.
-    if (this.callbackPort) {
-      this.startCardActionServer(onMessage);
-    } else {
-      console.log('[Feishu] Card action server not started (no port in config).');
-    }
   }
 
   async startWebhook(onMessage: IncomingMessageHandler) {
@@ -245,14 +237,6 @@ export class FeishuClient {
           if (body.encrypt && this.config.encrypt_key) {
             const decrypted = decryptEvent(body.encrypt, this.config.encrypt_key);
             body = JSON.parse(decrypted);
-          }
-
-          // Card action callback
-          if (this.isCardAction(body)) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ code: 0 }));
-            await this.handleCardAction(body, onMessage);
-            return;
           }
 
           if (body.type === 'url_verification') {
@@ -302,87 +286,6 @@ export class FeishuClient {
     });
   }
 
-  private startCardActionServer(onMessage: IncomingMessageHandler) {
-    if (this.cardServer) return;
-    const port = this.callbackPort || 8080;
-    this.cardServer = http.createServer((req, res) => {
-      if (req.method !== 'POST') {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      req.on('data', chunk => chunks.push(chunk));
-      req.on('end', async () => {
-        try {
-          const rawBody = Buffer.concat(chunks).toString('utf8');
-          if (!rawBody) return res.end();
-          let body: any = JSON.parse(rawBody);
-
-          if (body.encrypt && this.config.encrypt_key) {
-            const decrypted = decryptEvent(body.encrypt, this.config.encrypt_key);
-            body = JSON.parse(decrypted);
-          }
-
-          if (!this.isCardAction(body)) {
-            res.writeHead(200);
-            res.end('OK');
-            return;
-          }
-
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ code: 0 }));
-          await this.handleCardAction(body, onMessage);
-        } catch (e) {
-          console.error('[Feishu CardAction] ❌ Server Error:', e);
-          if (!res.headersSent) {
-            res.writeHead(500);
-            res.end();
-          }
-        }
-      });
-    });
-
-    this.cardServer.listen(port, () => {
-      console.log(`✅ Feishu CardAction Server listening on port ${port}`);
-      if (this.callbackUrl) {
-        console.log(`[Feishu] CardAction URL: ${this.callbackUrl}`);
-      } else {
-        console.log('[Feishu] CardAction URL: http://<public-host>:' + port);
-      }
-    });
-  }
-
-  private isCardAction(body: any): boolean {
-    return !!body?.action?.value && !!body?.open_message_id;
-  }
-
-  private async handleCardAction(body: any, onMessage: IncomingMessageHandler) {
-    const value = body?.action?.value || {};
-    const cmd = value.cmd || value.command || value.text;
-    if (!cmd) return;
-
-    const messageId = body.open_message_id;
-    const senderId = body.open_id || body.user_id || '';
-
-    let chatId = '';
-    if (messageId) {
-      try {
-        const res = await this.apiClient.im.message.get({
-          path: { message_id: messageId },
-        });
-        const item = res?.data?.items?.[0];
-        chatId = item?.chat_id || '';
-      } catch (e) {
-        console.error('[Feishu CardAction] ❌ message.get failed:', e);
-      }
-    }
-
-    if (!chatId) return;
-    await onMessage(chatId, String(cmd), String(messageId || ''), String(senderId || ''));
-  }
-
   async stop() {
     if (this.wsClient) {
       this.wsClient = null;
@@ -391,10 +294,6 @@ export class FeishuClient {
     if (this.httpServer) {
       this.httpServer.close();
       this.httpServer = null;
-    }
-    if (this.cardServer) {
-      this.cardServer.close();
-      this.cardServer = null;
     }
   }
 }

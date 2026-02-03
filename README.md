@@ -121,7 +121,7 @@ Custom commands are supported via:
 
 ### Session / Agent Switching
 
-Session switching via `/sessions` is fully supported. The list and follow-up choices are returned to the chat, and you can reply with `/sessions <id>` to bind this chat to the chosen session.
+Session switching via `/sessions` is fully supported. The list is returned to the chat, and you can reply with `/sessions <id>` **or** `/sessions <index>` to bind this chat to the chosen session.
 
 If your OpenCode setup provides additional slash commands, they will still be forwarded via `session.command` unless explicitly handled above.
 
