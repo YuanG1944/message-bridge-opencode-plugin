@@ -1,5 +1,15 @@
 # Release Note (2026-02-07)
 
+## 🚀 Major Addition: Telegram Support
+
+- Added **Telegram bridge support** (Bot API):
+  - polling mode
+  - webhook mode
+  - incoming message handling
+  - message send/edit pipeline
+  - slash-command bridge flow
+  - media input support (photo/document/video/audio/voice/animation/sticker)
+
 ## Highlights
 
 - Refactored handler flow into smaller modules:
@@ -11,16 +21,12 @@
 - Improved execution/tool-step message aggregation behavior to reduce message spam and keep final answer separated.
 - Added stronger runtime/state typing in handler and bridge paths, reducing `any` usage and aligning with SDK event shapes.
 - Improved slash-command support and routing consistency.
-- Added Telegram bridge support (Bot API polling + webhook):
-  - receive incoming text messages
-  - send/edit bridge messages in chat
-  - wired `telegram-bridge` config parsing and adapter registration
-  - media input support (photo/document/video/audio/voice/animation/sticker)
-  - slash command compatibility improvements (including Telegram command filtering)
+- Telegram follow-up improvements:
+  - command compatibility improvements (including Telegram command filtering)
   - typing + reaction UX alignment (show loading reaction and clear when response is finalized)
   - improved retry/edit behavior and lower Telegram edit retry delay for better delivery latency
   - stronger conflict diagnostics for polling mode (`getUpdates` single-consumer conflict)
-  - fixed Telegram reaction cleanup timing in slash-command and non-streaming reply paths
+  - fixed reaction cleanup timing in slash-command and non-streaming reply paths
   - reduced duplicate/no-op edit churn to lower Telegram-side perceived latency
 
 ## Slash Command Updates
@@ -41,6 +47,9 @@
 - Model display in status/footer was simplified to reduce noise.
 - `/new` now keeps the last selected agent/model for the same chat binding.
 - New session initialization now defaults to `plan` only when no previous agent selection exists.
+- Bugfix ([#2](https://github.com/YuanG1944/message-bridge-opencode-plugin/issues/2)):
+  - fixed `/new` incorrectly clearing existing chat state
+  - now `/new` inherits previous agent/model instead of resetting all state
 
 ## Feishu Rendering / UX
 

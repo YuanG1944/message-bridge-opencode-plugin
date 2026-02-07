@@ -18,6 +18,10 @@ function isToolCallPhase(buf: ExecutionMessageBuffer): boolean {
   return note.includes('tool-calls') || note.includes('tool calls');
 }
 
+function isTerminalStatus(status: BufferStatus | undefined): boolean {
+  return status === 'done' || status === 'error' || status === 'aborted';
+}
+
 export function shouldCarryPlatformMessageAcrossAssistantMessages(
   prevBuf: ExecutionMessageBuffer | undefined,
 ): boolean {
@@ -69,11 +73,13 @@ export function buildFinalizedExecutionContent(buffer: ExecutionMessageBuffer): 
 }
 
 export function buildPlatformDisplay(buffer: ExecutionMessageBuffer): string {
-  // Avoid leaking partial conclusion into execution cards.
+  // Avoid leaking partial conclusion into execution cards during streaming.
+  // Once terminal, always show answer text even if execution context exists.
   if (
     buffer?.__executionCarried &&
     hasExecutionLikeContent(buffer) &&
-    hasSubstantiveAnswerText(buffer)
+    hasSubstantiveAnswerText(buffer) &&
+    !isTerminalStatus(buffer.status)
   ) {
     return buildDisplayContent({ ...buffer, text: '' });
   }
