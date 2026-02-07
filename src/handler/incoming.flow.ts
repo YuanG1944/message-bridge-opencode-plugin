@@ -41,6 +41,22 @@ function isFilePartInput(part: TextPartInput | FilePartInput): part is FilePartI
   return part.type === 'file';
 }
 
+function normalizeSlashCommand(command?: string): string | undefined {
+  if (!command) return command;
+  const aliasMap: Record<string, string> = {
+    resume: 'sessions',
+    continue: 'sessions',
+    summarize: 'compact',
+    model: 'models',
+    restart: 'restart',
+    clear: 'new',
+    new: 'new',
+    reset: 'restart',
+  };
+
+  return aliasMap[command] || command;
+}
+
 export type IncomingFlowDeps = {
   sessionCache: Map<string, string>;
   sessionToAdapterKey: Map<string, string>;
@@ -77,22 +93,7 @@ export const createIncomingHandlerWithDeps = (
     const slash = parseSlashCommand(text);
     const cacheKey = `${adapterKey}:${chatId}`;
     const rawCommand = slash?.command?.toLowerCase();
-    const normalizedCommand =
-      rawCommand === 'resume' || rawCommand === 'continue'
-        ? 'sessions'
-        : rawCommand === 'summarize'
-          ? 'compact'
-          : rawCommand === 'model'
-            ? 'models'
-          : rawCommand === 'restart'
-            ? 'restart'
-          : rawCommand === 'clear'
-            ? 'new'
-          : rawCommand === 'new'
-            ? 'new'
-          : rawCommand === 'reset'
-            ? 'restart'
-            : rawCommand;
+    const normalizedCommand = normalizeSlashCommand(rawCommand);
     const sessionsArg = slash?.arguments?.trim() || '';
     const targetSessionId =
       normalizedCommand === 'sessions' &&
@@ -117,6 +118,8 @@ export const createIncomingHandlerWithDeps = (
       }
 
       const createNewSession = async () => {
+        const previousAgent = deps.chatAgent.get(cacheKey);
+        const previousModel = deps.chatModel.get(cacheKey);
         const uniqueTitle = `[${adapterKey}] Chat ${chatId.slice(
           -4,
         )} [${new Date().toLocaleTimeString()}]`;
@@ -127,8 +130,9 @@ export const createIncomingHandlerWithDeps = (
           deps.sessionCache.set(cacheKey, sessionId);
           deps.sessionToAdapterKey.set(sessionId, adapterKey);
           deps.sessionToCtx.set(sessionId, { chatId, senderId });
-          deps.chatAgent.set(cacheKey, DEFAULT_AGENT_ID);
-          deps.chatModel.delete(cacheKey);
+          deps.chatAgent.set(cacheKey, previousAgent || DEFAULT_AGENT_ID);
+          if (previousModel) deps.chatModel.set(cacheKey, previousModel);
+          else deps.chatModel.delete(cacheKey);
         }
         return sessionId;
       };

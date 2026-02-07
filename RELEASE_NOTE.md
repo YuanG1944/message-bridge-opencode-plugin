@@ -20,6 +20,8 @@
   - typing + reaction UX alignment (show loading reaction and clear when response is finalized)
   - improved retry/edit behavior and lower Telegram edit retry delay for better delivery latency
   - stronger conflict diagnostics for polling mode (`getUpdates` single-consumer conflict)
+  - fixed Telegram reaction cleanup timing in slash-command and non-streaming reply paths
+  - reduced duplicate/no-op edit churn to lower Telegram-side perceived latency
 
 ## Slash Command Updates
 
@@ -37,6 +39,8 @@
 
 - Session/agent/model state handling is now clearer in status output.
 - Model display in status/footer was simplified to reduce noise.
+- `/new` now keeps the last selected agent/model for the same chat binding.
+- New session initialization now defaults to `plan` only when no previous agent selection exists.
 
 ## Feishu Rendering / UX
 
@@ -51,3 +55,6 @@
 - Added Telegram config guide:
   - `config-guide/telegram/GUIDE.md`
   - `config-guide/telegram/GUIDE.zh.md`
+- Added troubleshooting notes for:
+  - polling conflict (`terminated by other getUpdates request`)
+  - network reachability errors (`Unable to connect`)
