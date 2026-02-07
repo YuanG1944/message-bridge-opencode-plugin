@@ -5,8 +5,8 @@ import {
   SAFE_MAX_TEXT,
   SAFE_MAX_TOOL_INPUT,
   SAFE_MAX_TOOL_OUTPUT,
-  UPDATE_INTERVAL,
 } from '../constants';
+import { getUpdateIntervalByAdapter } from '../utils';
 import { Part } from '@opencode-ai/sdk';
 
 export type BufferStatus = 'streaming' | 'done' | 'aborted' | 'error';
@@ -270,8 +270,9 @@ export function applyPartToBuffer(buffer: MessageBuffer, part: Part, delta?: str
   // 其它 part：暂不处理（renderer/后续需要再加）
 }
 
-export function shouldFlushNow(buffer: MessageBuffer): boolean {
+export function shouldFlushNow(buffer: MessageBuffer, adapterKey?: string): boolean {
   const now = Date.now();
   const timeSinceLastUpdate = now - buffer.lastUpdateTime;
-  return !buffer.platformMsgId || timeSinceLastUpdate > UPDATE_INTERVAL;
+  const interval = getUpdateIntervalByAdapter(adapterKey);
+  return !buffer.platformMsgId || timeSinceLastUpdate > interval;
 }

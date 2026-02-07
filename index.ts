@@ -1,8 +1,7 @@
 // index.ts
 import type { Plugin } from '@opencode-ai/plugin';
-import type { Config } from '@opencode-ai/sdk';
 
-import { globalState } from './src/utils';
+import { globalState, isEnabled, runtimeInstanceId } from './src/utils';
 import { AGENT_LARK, AGENT_IMESSAGE, AGENT_TELEGRAM } from './src/constants';
 import { bridgeLogger, getBridgeLogFilePath } from './src/logger';
 
@@ -10,57 +9,17 @@ import { AdapterMux } from './src/handler/mux';
 import { startGlobalEventListener, createIncomingHandler } from './src/handler';
 
 import { FeishuAdapter } from './src/feishu/feishu.adapter';
-import type { FeishuConfig, BridgeAdapter } from './src/types';
+import type { BridgeAdapter } from './src/types';
+import { TelegramAdapter } from './src/telegram/telegram.adapter';
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-// isEnabled
-function isEnabled(cfg: Config | undefined, key: string): boolean {
-  const node = cfg?.agent?.[key];
-  if (!node) return false;
-  if (node.disable === true) return false;
-  return true;
-}
-
-function parseFeishuConfig(cfg: Config | undefined): FeishuConfig {
-  const node = cfg?.agent?.[AGENT_LARK];
-  const options = asRecord(node?.options);
-
-  const app_id = typeof options.app_id === 'string' ? options.app_id : '';
-  const app_secret = typeof options.app_secret === 'string' ? options.app_secret : '';
-  const mode = options.mode === 'webhook' ? 'webhook' : 'ws';
-  const callbackUrlRaw = options.callback_url;
-  const callbackUrl =
-    typeof callbackUrlRaw === 'string' && callbackUrlRaw.length > 0
-      ? callbackUrlRaw.startsWith('http')
-        ? callbackUrlRaw
-        : `http://${callbackUrlRaw}`
-      : undefined;
-
-  if (mode === 'webhook' && !callbackUrl) {
-    bridgeLogger.warn(`[Plugin] Missing callback_url for ${AGENT_LARK} in webhook mode`);
-  }
-
-  if (!app_id || !app_secret) {
-    throw new Error(`[Plugin] Missing options for ${AGENT_LARK}: app_id/app_secret`);
-  }
-
-  return {
-    app_id,
-    app_secret,
-    mode,
-    callback_url: callbackUrl,
-    encrypt_key: typeof options.encrypt_key === 'string' ? options.encrypt_key : undefined,
-  };
-}
+import { parseFeishuConfig } from './index.feishu';
+import { parseTelegramConfig } from './index.telegram';
 
 export const BridgePlugin: Plugin = async ctx => {
   const { client } = ctx;
-  bridgeLogger.info(`[Plugin] bridge entry initializing logFile=${getBridgeLogFilePath()}`);
+  bridgeLogger.info(
+    `[Plugin] bridge entry initializing logFile=${getBridgeLogFilePath()} pid=${process.pid} instance=${runtimeInstanceId}`,
+  );
 
   const bootstrap = async () => {
     try {
@@ -70,23 +29,35 @@ export const BridgePlugin: Plugin = async ctx => {
       // mux 单例
       const mux: AdapterMux = globalState.__bridge_mux || new AdapterMux();
       globalState.__bridge_mux = mux;
+      const adapterInstances: Map<string, BridgeAdapter> =
+        globalState.__bridge_adapter_instances || new Map<string, BridgeAdapter>();
+      const startedAdapters: Set<string> =
+        globalState.__bridge_started_adapters || new Set<string>();
+      const startingAdapters: Set<string> =
+        globalState.__bridge_starting_adapters || new Set<string>();
+      globalState.__bridge_adapter_instances = adapterInstances;
+      globalState.__bridge_started_adapters = startedAdapters;
+      globalState.__bridge_starting_adapters = startingAdapters;
 
       // 允许多个 adapter 同时启用
-      const adaptersToStart: Array<{ key: string; adapter: BridgeAdapter }> = [];
+      const adaptersToStart: Array<{ key: string; create: () => BridgeAdapter }> = [];
 
       if (isEnabled(cfg, AGENT_LARK)) {
         const feishuCfg = parseFeishuConfig(cfg);
-        adaptersToStart.push({ key: AGENT_LARK, adapter: new FeishuAdapter(feishuCfg) });
+        adaptersToStart.push({ key: AGENT_LARK, create: () => new FeishuAdapter(feishuCfg) });
+      }
+
+      if (isEnabled(cfg, AGENT_TELEGRAM)) {
+        const telegramCfg = parseTelegramConfig(cfg);
+        adaptersToStart.push({
+          key: AGENT_TELEGRAM,
+          create: () => new TelegramAdapter(telegramCfg),
+        });
       }
 
       if (isEnabled(cfg, AGENT_IMESSAGE)) {
         bridgeLogger.info('[Plugin] imessage-bridge enabled (not implemented yet).');
         // TODO: mux.register(AGENT_IMESSAGE, new IMessageAdapter(...))
-      }
-
-      if (isEnabled(cfg, AGENT_TELEGRAM)) {
-        bridgeLogger.info('[Plugin] telegram-bridge enabled (not implemented yet).');
-        // TODO: mux.register(AGENT_TELEGRAM, new TelegramAdapter(...))
       }
 
       if (adaptersToStart.length === 0) {
@@ -95,11 +66,27 @@ export const BridgePlugin: Plugin = async ctx => {
       }
 
       // 注册 + start（incoming）
-      for (const { key, adapter } of adaptersToStart) {
+      for (const { key, create } of adaptersToStart) {
+        const adapter = adapterInstances.get(key) || create();
+        adapterInstances.set(key, adapter);
         mux.register(key, adapter);
+        if (startedAdapters.has(key)) {
+          bridgeLogger.info(`[Plugin] adapter already started, skip start adapter=${key}`);
+          continue;
+        }
+        if (startingAdapters.has(key)) {
+          bridgeLogger.info(`[Plugin] adapter is starting, skip duplicate start adapter=${key}`);
+          continue;
+        }
+        startingAdapters.add(key);
         const incoming = createIncomingHandler(client, mux, key);
-        await adapter.start(incoming);
-        bridgeLogger.info(`[Plugin] started adapter=${key}`);
+        try {
+          await adapter.start(incoming);
+          startedAdapters.add(key);
+          bridgeLogger.info(`[Plugin] started adapter=${key}`);
+        } finally {
+          startingAdapters.delete(key);
+        }
       }
 
       // 全局 listener 只启动一次（mux）

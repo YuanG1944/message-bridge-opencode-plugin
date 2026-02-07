@@ -6,6 +6,9 @@ export type BridgeSendErrorFn = (chatId: string, content: string) => Promise<voi
 type BridgeRuntimeState = {
   __bridge_mux?: AdapterMux;
   __bridge_feishu_adapter?: BridgeAdapter;
+  __bridge_adapter_instances?: Map<string, BridgeAdapter>;
+  __bridge_started_adapters?: Set<string>;
+  __bridge_starting_adapters?: Set<string>;
   __bridge_listener_started?: boolean;
   __bridge_send_error_message?: BridgeSendErrorFn;
   __bridge_progress_msg_ids?: Map<string, string>;

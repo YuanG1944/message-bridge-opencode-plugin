@@ -302,7 +302,6 @@ export const createIncomingHandlerWithDeps = (
           ...(model ? { model: { providerID: model.providerID, modelID: model.modelID } } : {}),
         },
       });
-
       bridgeLogger.info(`[Incoming] prompt-sent adapter=${adapterKey} session=${sessionId}`);
     } catch (err: unknown) {
       bridgeLogger.error(`[Incoming] adapter=${adapterKey} chat=${chatId} failed`, err);

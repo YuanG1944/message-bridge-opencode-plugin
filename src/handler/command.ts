@@ -1,7 +1,11 @@
 // src/handler/command.ts
 import type { FilePartInput, OpencodeClient, TextPartInput } from '@opencode-ai/sdk';
-import { DEFAULT_MAX_FILE_MB, DEFAULT_MAX_FILE_RETRY, globalState } from '../utils';
-import { isBridgeAgentId } from '../constants';
+import {
+  DEFAULT_MAX_FILE_MB,
+  DEFAULT_MAX_FILE_RETRY,
+  globalState,
+  isBridgeAgentId,
+} from '../utils';
 import { bridgeLogger, getBridgeLogFilePath } from '../logger';
 
 type SessionListItem = { id: string; title: string };

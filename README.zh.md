@@ -23,13 +23,18 @@
   * 支持 '/' 命令
   * 支持 **Webhook** 与 **WebSocket** 两种模式
   * 适配 OpenCode 插件体系
+* **Telegram（Bot API / 轮询 + Webhook）**
+
+  * 支持接收文本消息
+  * 支持常见媒体消息（图片/文件/视频/音频/语音/贴纸/动图）
+  * 支持流式回复发送与编辑
+  * 支持桥接层 slash 命令流程
 
 ### 🚧 开发中（优先级排序）
 
 * **iMessage（下一优先目标）**
 * 其他计划中的平台：
 
-  * Telegram
   * QQ
   * WhatsApp（取决于 API 可用性）
 
@@ -171,6 +176,48 @@ npm install message-bridge-opencode-plugin
 	
 	 [快速开始 🔗 ](https://github.com/YuanG1944/message-bridge-opencode-plugin/tree/main/config-guide/lark/GUIDE.zh.md)
 
+- Telegram 配置
+
+  [快速开始 🔗 ](https://github.com/YuanG1944/message-bridge-opencode-plugin/tree/main/config-guide/telegram/GUIDE.zh.md)
+
+```json
+{
+  "agent": {
+    "telegram-bridge": {
+      "options": {
+        "mode": "polling",
+        "bot_token": "123456:your_bot_token",
+        "polling_timeout_sec": "20",
+        "polling_interval_ms": "300"
+      }
+    }
+  }
+}
+```
+
+### Telegram 使用说明
+
+* 轮询模式下，同一个 bot token 同时只能有一个进程执行 `getUpdates`。
+* 如果出现 `Conflict: terminated by other getUpdates request`，请关闭其它实例，或改用 webhook 模式。
+* 如果日志出现 `Unable to connect`，请检查当前机器到 Telegram Bot API 的网络连通性。
+
+- Telegram Webhook 配置
+
+```json
+{
+  "agent": {
+    "telegram-bridge": {
+      "options": {
+        "mode": "webhook",
+        "bot_token": "123456:your_bot_token",
+        "callback_url": "https://your.domain.com/telegram/webhook",
+        "webhook_secret_token": "your_secret_token"
+      }
+    }
+  }
+}
+```
+
 ## 🚧 当前必须使用开发模式
 
 由于 OpenCode 官方当前存在以下问题：
@@ -196,7 +243,7 @@ bun install
 
 * [x] 飞书 / Lark（已完成，稳定）
 * [ ] iMessage（优先实现）
-* [ ] Telegram
+* [x] Telegram（Bot API / 轮询 + Webhook）
 * [ ] Slack
 * [ ] Discord
 * [ ] 统一消息回复 / 会话抽象

@@ -6,13 +6,10 @@ export const AGENT_TELEGRAM = 'telegram-bridge';
 
 export const BRIDGE_AGENT_IDS = [AGENT_LARK, AGENT_IMESSAGE, AGENT_TELEGRAM] as const;
 
-export function isBridgeAgentId(value: string): boolean {
-  return BRIDGE_AGENT_IDS.includes(value as (typeof BRIDGE_AGENT_IDS)[number]);
-}
-
 export const LOADING_EMOJI = 'Typing';
 
 export const UPDATE_INTERVAL = 900;
+export const TELEGRAM_UPDATE_INTERVAL = 250;
 
 export const MAX_REASONING_CHARS = 4000;
 export const MAX_TEXT_CHARS = 16000;

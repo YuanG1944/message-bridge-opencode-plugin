@@ -240,7 +240,7 @@ async function handleMessagePartUpdatedEvent(
     markStatus(deps.msgBuffers, messageId, 'done', part.reason || 'step-finish');
   }
 
-  if (!shouldFlushNow(buffer)) {
+  if (!shouldFlushNow(buffer, adapterKey || undefined)) {
     bridgeLogger.debug(
       `[BridgeFlowDebug] skip-flush sid=${sessionId} mid=${messageId} reason=throttle`,
     );
@@ -248,7 +248,9 @@ async function handleMessagePartUpdatedEvent(
   }
   const hasAny = buffer.reasoning.length > 0 || buffer.text.length > 0 || buffer.tools.size > 0;
   if (!hasAny) {
-    bridgeLogger.debug(`[BridgeFlowDebug] skip-flush sid=${sessionId} mid=${messageId} reason=empty`);
+    bridgeLogger.debug(
+      `[BridgeFlowDebug] skip-flush sid=${sessionId} mid=${messageId} reason=empty`,
+    );
     return;
   }
 

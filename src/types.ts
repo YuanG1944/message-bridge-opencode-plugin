@@ -1,14 +1,12 @@
 // src/types.ts
 import type { FilePartInput, TextPartInput } from '@opencode-ai/sdk';
 
-export type BridgeMode = 'ws' | 'webhook';
-
 export type IncomingMessageHandler = (
   chatId: string,
   text: string,
   messageId: string,
   senderId: string,
-  parts?: Array<TextPartInput | FilePartInput>
+  parts?: Array<TextPartInput | FilePartInput>,
 ) => Promise<void>;
 
 export interface BridgeAdapter {
@@ -28,7 +26,16 @@ export interface BridgeAdapter {
 export interface FeishuConfig {
   app_id: string;
   app_secret: string;
-  mode: BridgeMode;
+  mode: 'ws' | 'webhook';
   callback_url?: string;
   encrypt_key?: string;
+}
+
+export interface TelegramConfig {
+  mode: 'polling' | 'webhook';
+  bot_token: string;
+  polling_timeout_sec: number;
+  polling_interval_ms: number;
+  callback_url?: string;
+  webhook_secret_token?: string;
 }

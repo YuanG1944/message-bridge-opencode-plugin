@@ -6,19 +6,41 @@ import { bridgeLogger } from '../logger';
 
 type SessionContext = { chatId: string; senderId: string };
 
+function getEditRetryDelay(adapter: BridgeAdapter): number {
+  const provider = (adapter as { provider?: string }).provider;
+  if (provider === 'telegram') return 60;
+  return 500;
+}
+
 export async function safeEditWithRetry(
   adapter: BridgeAdapter,
   chatId: string,
   platformMsgId: string,
   content: string,
 ): Promise<string | null> {
-  const ok = await adapter.editMessage(chatId, platformMsgId, content);
+  let ok = false;
+  try {
+    ok = await adapter.editMessage(chatId, platformMsgId, content);
+  } catch (e) {
+    bridgeLogger.warn(
+      `[BridgeFlowDebug] edit threw first try chat=${chatId} msg=${platformMsgId} contentLen=${content.length}`,
+      e,
+    );
+  }
   if (ok) return platformMsgId;
   bridgeLogger.warn(
     `[BridgeFlowDebug] edit failed first try chat=${chatId} msg=${platformMsgId} contentLen=${content.length}`,
   );
-  await sleep(500);
-  const retryOk = await adapter.editMessage(chatId, platformMsgId, content);
+  await sleep(getEditRetryDelay(adapter));
+  let retryOk = false;
+  try {
+    retryOk = await adapter.editMessage(chatId, platformMsgId, content);
+  } catch (e) {
+    bridgeLogger.warn(
+      `[BridgeFlowDebug] edit threw retry chat=${chatId} msg=${platformMsgId} contentLen=${content.length}`,
+      e,
+    );
+  }
   if (retryOk) return platformMsgId;
   bridgeLogger.warn(
     `[BridgeFlowDebug] edit failed retry chat=${chatId} msg=${platformMsgId} fallback=sendMessage contentLen=${content.length}`,

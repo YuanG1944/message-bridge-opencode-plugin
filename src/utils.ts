@@ -1,7 +1,15 @@
 // src/utils.ts
+import { Config } from '@opencode-ai/sdk';
 import type { BridgeGlobalState } from './global.state';
+import {
+  AGENT_TELEGRAM,
+  BRIDGE_AGENT_IDS,
+  TELEGRAM_UPDATE_INTERVAL,
+  UPDATE_INTERVAL,
+} from './constants';
 
 export const globalState = globalThis as BridgeGlobalState;
+export const runtimeInstanceId = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 export function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -24,4 +32,26 @@ export function parseSlashCommand(text: string): { command: string; arguments: s
 
   const args = (match[2] ?? '').trim();
   return { command, arguments: args };
+}
+
+export function isEnabled(cfg: Config | undefined, key: string): boolean {
+  const node = cfg?.agent?.[key];
+  if (!node) return false;
+  if (node.disable === true) return false;
+  return true;
+}
+
+export function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+export function getUpdateIntervalByAdapter(adapterKey?: string): number {
+  if (adapterKey === AGENT_TELEGRAM) return TELEGRAM_UPDATE_INTERVAL;
+  return UPDATE_INTERVAL;
+}
+
+export function isBridgeAgentId(value: string): boolean {
+  return BRIDGE_AGENT_IDS.includes(value as (typeof BRIDGE_AGENT_IDS)[number]);
 }
