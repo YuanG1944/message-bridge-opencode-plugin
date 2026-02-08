@@ -113,6 +113,8 @@ These are implemented directly against OpenCode APIs:
 * `/sessions delete all` → delete all sessions except current one
 * `/maxFileSize <xmb>` → set upload file size limit (default 10MB)
 * `/maxFileRetry <n>` → set resource download retry count (default 3)
+* `/savefile` → ask user to upload file and save directly to local path (without LLM)
+* `/sendfile <path>` → force-send a local file back via bot
 * `/share` / `/unshare`
 * `/compact` (alias `/summarize`)
 * `/init`
@@ -143,6 +145,15 @@ Session batch deletion is supported via `/sessions delete ...`, and `/sessions d
 File upload size limit can be adjusted per chat with `/maxFileSize <xmb>` (default 10MB).
 
 If your OpenCode setup provides additional slash commands, they will still be forwarded via `session.command` unless explicitly handled above.
+
+### Local File Return / Save (No-LLM path)
+
+This bridge supports two direct file operations:
+
+* `/sendfile <path>`: force-send a local file by path.
+* `/savefile`: enter upload mode; the next uploaded file is saved to local disk and the saved path is returned.
+
+These flows bypass LLM reasoning and are handled directly by bridge adapters.
 
 ---
 
@@ -192,6 +203,15 @@ npm install message-bridge-opencode-plugin
 ### Telegram (Bot API - Polling)
 
 [Quick Start 🔗](https://github.com/YuanG1944/message-bridge-opencode-plugin/tree/main/config-guide/telegram/GUIDE.md)
+
+### Optional file-bridge options
+
+You can configure local file return behavior in `agent.message-bridge.options`:
+
+* `auto_send_local_files` (`"true"` / `"false"`, default `false`)
+* `auto_send_local_files_max_mb` (default `20`)
+* `auto_send_local_files_allow_absolute` (`"true"` / `"false"`, default `false`)
+* `webhook_listen_port` (Telegram webhook local listen port, optional; fallback: callback_url port -> `18080`)
 
 ## 🚧 Development Mode Usage (Required for now)
 

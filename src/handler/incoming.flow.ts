@@ -65,6 +65,7 @@ export type IncomingFlowDeps = {
   chatModel: Map<string, SelectedModel>;
   chatSessionList: Map<string, Array<{ id: string; title: string }>>;
   chatAgentList: Map<string, Array<{ id: string; name: string }>>;
+  chatAwaitingSaveFile: Map<string, boolean>;
   chatMaxFileSizeMb: Map<string, number>;
   chatMaxFileRetry: Map<string, number>;
   formatUserError: (err: unknown) => string;
@@ -147,7 +148,10 @@ export const createIncomingHandlerWithDeps = (
       };
 
       const sendCommandMessage = async (content: string) => {
-        await adapter.sendMessage(chatId, `## Command\n${content}`);
+        const normalized = content.trimStart().startsWith('## Command')
+          ? content
+          : `## Command\n${content}`;
+        await adapter.sendMessage(chatId, normalized);
       };
 
       const sendErrorMessage = async (content: string) => {
@@ -160,6 +164,11 @@ export const createIncomingHandlerWithDeps = (
 
       const sendUnsupported = async () => {
         await sendCommandMessage(`❌ 命令 /${slash?.command} 暂不支持在聊天中使用。`);
+      };
+
+      const sendLocalFile = async (filePath: string): Promise<boolean | null> => {
+        if (!adapter.sendLocalFile) return null;
+        return adapter.sendLocalFile(chatId, filePath);
       };
 
       const isKnownCustomCommand = async (name: string): Promise<boolean | null> => {
@@ -191,6 +200,7 @@ export const createIncomingHandlerWithDeps = (
           chatModel: deps.chatModel,
           chatSessionList: deps.chatSessionList,
           chatAgentList: deps.chatAgentList,
+          chatAwaitingSaveFile: deps.chatAwaitingSaveFile,
           chatMaxFileSizeMb: deps.chatMaxFileSizeMb,
           chatMaxFileRetry: deps.chatMaxFileRetry,
           ensureSession,
@@ -199,6 +209,7 @@ export const createIncomingHandlerWithDeps = (
           sendErrorMessage,
           sendUnsupported,
           isKnownCustomCommand,
+          sendLocalFile,
         });
         if (handled) return;
       }
@@ -207,6 +218,7 @@ export const createIncomingHandlerWithDeps = (
       const hasText = Boolean(text && text.trim());
 
       if (fileParts.length > 0) {
+        const isSaveFileMode = deps.chatAwaitingSaveFile.get(cacheKey) === true;
         bridgeLogger.info(
           `[Incoming] file-parts adapter=${adapterKey} chat=${chatId} count=${fileParts.length}`,
         );
@@ -225,13 +237,34 @@ export const createIncomingHandlerWithDeps = (
         );
 
         for (const p of fileParts) {
-          const res = await saveFilePartToLocal(cacheKey, p);
+          const res = await saveFilePartToLocal(cacheKey, p, {
+            enqueue: !isSaveFileMode,
+          });
           if (res.ok && res.record) {
             if (res.duplicated) duplicated.push(res.record.path);
             else saved.push(res.record.path);
           } else {
             failed++;
           }
+        }
+
+        if (isSaveFileMode) {
+          deps.chatAwaitingSaveFile.delete(cacheKey);
+          const lines: string[] = ['## Status'];
+          if (saved.length > 0) {
+            lines.push(`✅ 文件已保存：\n${saved.map(p => `- ${p}`).join('\n')}`);
+          }
+          if (duplicated.length > 0) {
+            lines.push(`🟡 文件已存在：\n${duplicated.map(p => `- ${p}`).join('\n')}`);
+          }
+          if (failed > 0) {
+            lines.push('❌ 部分文件保存失败，请重试 /savefile');
+          }
+          if (saved.length === 0 && duplicated.length === 0 && failed === 0) {
+            lines.push('❌ 未检测到可保存文件，请重试 /savefile');
+          }
+          await adapter.sendMessage(chatId, lines.join('\n'));
+          return;
         }
 
         if (!hasText) {

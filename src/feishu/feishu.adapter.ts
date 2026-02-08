@@ -1,6 +1,16 @@
-import type { BridgeAdapter, FeishuConfig, IncomingMessageHandler } from '../types';
+import type {
+  BridgeAdapter,
+  FeishuConfig,
+  IncomingMessageHandler,
+  OutgoingFileConfig,
+  ResolvedLocalFile,
+} from '../types';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { FeishuClient } from './feishu.client';
 import { FeishuRenderer, extractFilesFromHandlerMarkdown, RenderedFile } from './feishu.renderer';
+import { resolveOutgoingLocalFiles } from '../bridge/outgoing.file';
+import { bridgeLogger } from '../logger';
 
 function clip(s: string, n = 8000) {
   if (!s) return '';
@@ -12,12 +22,18 @@ export class FeishuAdapter implements BridgeAdapter {
   private renderer: FeishuRenderer;
   private config: FeishuConfig;
   private sentFilesByMessage: Map<string, Set<string>>;
+  private outgoingFileCfg: OutgoingFileConfig;
 
   constructor(config: FeishuConfig) {
     this.config = config;
     this.client = new FeishuClient(config);
     this.renderer = new FeishuRenderer();
     this.sentFilesByMessage = new Map();
+    this.outgoingFileCfg = {
+      enabled: Boolean(config.auto_send_local_files),
+      maxMb: config.auto_send_local_files_max_mb ?? 20,
+      allowAbsolute: Boolean(config.auto_send_local_files_allow_absolute),
+    };
   }
 
   async start(onMessage: IncomingMessageHandler): Promise<void> {
@@ -33,8 +49,11 @@ export class FeishuAdapter implements BridgeAdapter {
   }
 
   async sendMessage(chatId: string, text: string): Promise<string | null> {
-    const files = extractFilesFromHandlerMarkdown(text);
+    const files = await this.collectOutgoingFiles(text);
     const sentSignatures = await this.sendNewFiles(chatId, files, undefined);
+    bridgeLogger.info(
+      `[Feishu] outgoing files chat=${chatId} candidates=${files.length} sent=${sentSignatures.size}`,
+    );
     const messageId = await this.client.sendMessage(chatId, this.renderer.render(text));
     if (messageId && sentSignatures.size > 0) {
       this.sentFilesByMessage.set(messageId, sentSignatures);
@@ -43,9 +62,12 @@ export class FeishuAdapter implements BridgeAdapter {
   }
 
   async editMessage(chatId: string, messageId: string, text: string): Promise<boolean> {
-    const files = extractFilesFromHandlerMarkdown(text);
+    const files = await this.collectOutgoingFiles(text);
     const sent = this.sentFilesByMessage.get(messageId);
     const newSent = await this.sendNewFiles(chatId, files, sent);
+    bridgeLogger.info(
+      `[Feishu] outgoing files(edit) chat=${chatId} msg=${messageId} candidates=${files.length} sent=${newSent.size}`,
+    );
     if (newSent.size > 0) {
       const merged = new Set([...(sent || []), ...newSent]);
       this.sentFilesByMessage.set(messageId, merged);
@@ -61,11 +83,58 @@ export class FeishuAdapter implements BridgeAdapter {
     await this.client.removeReaction(messageId, reactionId);
   }
 
+  async sendLocalFile(chatId: string, localPath: string): Promise<boolean> {
+    try {
+      const absPath = path.isAbsolute(localPath) ? localPath : path.resolve(process.cwd(), localPath);
+      const fileUrl = pathToFileURL(absPath).toString();
+      const filename = path.basename(absPath);
+      const ok = await this.client.sendFileAttachment(chatId, {
+        filename,
+        url: fileUrl,
+      });
+      bridgeLogger.info(
+        `[Feishu] command sendLocalFile chat=${chatId} path=${absPath} ok=${ok}`,
+      );
+      return ok;
+    } catch (err) {
+      bridgeLogger.warn(
+        `[Feishu] command sendLocalFile failed chat=${chatId} path=${localPath}`,
+        err,
+      );
+      return false;
+    }
+  }
+
   private fileSignature(file: RenderedFile): string {
     const s = `${file.filename || ''}|${file.mime || ''}|${file.url || ''}`;
     let h = 0;
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
     return String(h);
+  }
+
+  private localFileToRendered(file: ResolvedLocalFile): RenderedFile {
+    return {
+      filename: file.filename,
+      mime: file.mime,
+      url: `file://${file.absPath}`,
+    };
+  }
+
+  private async collectOutgoingFiles(markdown: string): Promise<RenderedFile[]> {
+    const fromFilesSection = extractFilesFromHandlerMarkdown(markdown);
+    if (!this.outgoingFileCfg.enabled) return fromFilesSection;
+
+    const resolved = await resolveOutgoingLocalFiles(markdown, this.outgoingFileCfg);
+    if (resolved.rejected.length > 0) {
+      bridgeLogger.info(
+        `[Feishu] outgoing local files rejected count=${resolved.rejected.length} sample=${resolved.rejected
+          .slice(0, 3)
+          .map(r => `${r.ref}:${r.reason}`)
+          .join(',')}`,
+      );
+    }
+    const localFiles = resolved.files.map(f => this.localFileToRendered(f));
+    return [...fromFilesSection, ...localFiles];
   }
 
   private async sendNewFiles(
@@ -77,7 +146,10 @@ export class FeishuAdapter implements BridgeAdapter {
     for (const f of files) {
       if (!f.url) continue;
       const sig = this.fileSignature(f);
-      if (sent?.has(sig)) continue;
+      if (sent?.has(sig)) {
+        bridgeLogger.debug(`[Feishu] outgoing duplicate skip sig=${sig}`);
+        continue;
+      }
       const ok = await this.client.sendFileAttachment(chatId, f);
       if (ok) sentNow.add(sig);
     }

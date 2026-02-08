@@ -19,6 +19,7 @@ const chatAgent = new Map<string, string>(); // adapterKey:chatId -> agent
 const chatModel = new Map<string, SelectedModel>(); // adapterKey:chatId -> model
 const chatSessionList = new Map<string, Array<{ id: string; title: string }>>();
 const chatAgentList = new Map<string, Array<{ id: string; name: string }>>();
+const chatAwaitingSaveFile = new Map<string, boolean>(); // adapterKey:chatId -> awaiting upload for /savefile
 const chatMaxFileSizeMb: Map<string, number> =
   globalState.__bridge_max_file_size || new Map<string, number>();
 const chatMaxFileRetry: Map<string, number> =
@@ -50,6 +51,7 @@ export async function startGlobalEventListener(api: OpencodeClient, mux: Adapter
     chatModel,
     chatSessionList,
     chatAgentList,
+    chatAwaitingSaveFile,
     chatMaxFileSizeMb,
     chatMaxFileRetry,
   });
@@ -68,6 +70,7 @@ export function stopGlobalEventListener() {
     chatModel,
     chatSessionList,
     chatAgentList,
+    chatAwaitingSaveFile,
     chatMaxFileSizeMb,
     chatMaxFileRetry,
   });
@@ -82,6 +85,7 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
     chatModel,
     chatSessionList,
     chatAgentList,
+    chatAwaitingSaveFile,
     chatMaxFileSizeMb,
     chatMaxFileRetry,
     formatUserError,

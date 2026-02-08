@@ -67,3 +67,44 @@
 - Added troubleshooting notes for:
   - polling conflict (`terminated by other getUpdates request`)
   - network reachability errors (`Unable to connect`)
+
+---
+
+# Release Note (2026-02-08)
+
+## 🚀 File Bridge Enhancements
+
+- Added local-file outbound bridge for Feishu + Telegram:
+  - auto-detect local paths from assistant output
+  - validate/read local files and send as real platform attachments
+  - message-level dedupe to avoid duplicate re-send on edits
+
+## New Commands
+
+- `/sendfile <path>`
+  - force-send a local file via bot without depending on LLM behavior.
+- `/savefile`
+  - enter upload-wait mode; the next uploaded file is saved directly to local disk and returns saved path.
+  - this flow bypasses LLM completely.
+
+## Config Additions
+
+- Added optional bridge config under `agent.message-bridge.options`:
+  - `auto_send_local_files` (default `false`)
+  - `auto_send_local_files_max_mb` (default `20`)
+  - `auto_send_local_files_allow_absolute` (default `false`)
+  - `webhook_listen_port` (Telegram webhook local listen port; fallback to callback_url port, then `18080`)
+
+## Feishu Reliability
+
+- Replaced SDK-first upload path with direct upload calls for attachments.
+- New direct upload helpers were added in `src/feishu/patch.ts` for image/file upload using tenant token.
+- This avoids recurring SDK socket-close failures in file upload path.
+
+## Cross-OS Path Support
+
+- Enhanced local path detection for outbound files:
+  - Unix absolute/relative paths
+  - `file://` URLs
+  - Windows drive paths (`C:\...`)
+  - Windows UNC paths (`\\server\share\...`)

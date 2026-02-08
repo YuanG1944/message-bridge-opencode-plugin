@@ -1,9 +1,16 @@
 // src/telegram/telegram.adapter.ts
-import type { BridgeAdapter, IncomingMessageHandler } from '../types';
-import type { TelegramConfig } from '../types';
+import type {
+  BridgeAdapter,
+  IncomingMessageHandler,
+  OutgoingFileConfig,
+  ResolvedLocalFile,
+  TelegramConfig,
+} from '../types';
+import * as path from 'node:path';
 import { TelegramClient } from './telegram.client';
 import { renderTelegram } from './telegram.renderer';
 import { bridgeLogger } from '../logger';
+import { resolveOutgoingLocalFiles } from '../bridge/outgoing.file';
 
 export class TelegramAdapter implements BridgeAdapter {
   provider: 'telegram' = 'telegram';
@@ -14,9 +21,16 @@ export class TelegramAdapter implements BridgeAdapter {
   private readonly virtualToRealMessage = new Map<string, string>();
   private readonly freezeStreamingEdits = new Set<string>();
   private readonly lastRenderedByMsg = new Map<string, string>();
+  private readonly sentFilesByMsg = new Map<string, Set<string>>();
+  private readonly outgoingFileCfg: OutgoingFileConfig;
 
   constructor(config: TelegramConfig) {
     this.client = new TelegramClient(config);
+    this.outgoingFileCfg = {
+      enabled: Boolean(config.auto_send_local_files),
+      maxMb: config.auto_send_local_files_max_mb ?? 20,
+      allowAbsolute: Boolean(config.auto_send_local_files_allow_absolute),
+    };
   }
 
   async start(handler: IncomingMessageHandler) {
@@ -31,6 +45,7 @@ export class TelegramAdapter implements BridgeAdapter {
     this.virtualToRealMessage.clear();
     this.freezeStreamingEdits.clear();
     this.lastRenderedByMsg.clear();
+    this.sentFilesByMsg.clear();
     await this.client.stop();
   }
 
@@ -40,6 +55,7 @@ export class TelegramAdapter implements BridgeAdapter {
       const sent = await this.client.sendMessage(chatId, rendered);
       if (sent) {
         this.lastRenderedByMsg.set(this.flowMessageKey(chatId, sent), rendered);
+        await this.sendLocalFilesIfNeeded(chatId, sent, markdown, true);
         await this.clearPendingReactions(chatId);
       }
       return sent;
@@ -65,12 +81,24 @@ export class TelegramAdapter implements BridgeAdapter {
       if (this.freezeStreamingEdits.has(key) && isStreaming) return true;
       if (isFinal) this.freezeStreamingEdits.delete(key);
       if (this.lastRenderedByMsg.get(targetKey) === rendered) {
+        await this.sendLocalFilesIfNeeded(
+          chatId,
+          resolvedMessageId,
+          markdown,
+          this.shouldSendLocalFilesNow(markdown, isStreaming, isFinal),
+        );
         if (!isStreaming) await this.clearPendingReactions(chatId);
         return true;
       }
       const ok = await this.client.editMessage(chatId, resolvedMessageId, rendered);
       if (ok) {
         this.lastRenderedByMsg.set(targetKey, rendered);
+        await this.sendLocalFilesIfNeeded(
+          chatId,
+          resolvedMessageId,
+          markdown,
+          this.shouldSendLocalFilesNow(markdown, isStreaming, isFinal),
+        );
         if (!isStreaming) await this.clearPendingReactions(chatId);
       }
       return ok;
@@ -79,12 +107,24 @@ export class TelegramAdapter implements BridgeAdapter {
       if (this.freezeStreamingEdits.has(key) && isStreaming) return true;
       if (isFinal) this.freezeStreamingEdits.delete(key);
       if (this.lastRenderedByMsg.get(targetKey) === rendered) {
+        await this.sendLocalFilesIfNeeded(
+          chatId,
+          targetMessageId,
+          markdown,
+          this.shouldSendLocalFilesNow(markdown, isStreaming, isFinal),
+        );
         if (!isStreaming) await this.clearPendingReactions(chatId);
         return true;
       }
       const ok = await this.client.editMessage(chatId, targetMessageId, rendered);
       if (ok) {
         this.lastRenderedByMsg.set(targetKey, rendered);
+        await this.sendLocalFilesIfNeeded(
+          chatId,
+          targetMessageId,
+          markdown,
+          this.shouldSendLocalFilesNow(markdown, isStreaming, isFinal),
+        );
         if (!isStreaming) await this.clearPendingReactions(chatId);
       }
       return ok;
@@ -116,17 +156,35 @@ export class TelegramAdapter implements BridgeAdapter {
     bridgeLogger.info(`[Telegram] typing-stop chat=${chatId} virtualMsg=${messageId}`);
     if (resolvedMessageId) {
       if (this.lastRenderedByMsg.get(targetKey) === rendered) {
+        await this.sendLocalFilesIfNeeded(
+          chatId,
+          resolvedMessageId,
+          markdown,
+          this.shouldSendLocalFilesNow(markdown, isStreaming, isFinal),
+        );
         await this.clearPendingReactions(chatId);
         return true;
       }
       const ok = await this.client.editMessage(chatId, resolvedMessageId, rendered);
       if (!ok) return false;
       this.lastRenderedByMsg.set(targetKey, rendered);
+      await this.sendLocalFilesIfNeeded(
+        chatId,
+        resolvedMessageId,
+        markdown,
+        this.shouldSendLocalFilesNow(markdown, isStreaming, isFinal),
+      );
     } else {
       const sent = await this.client.sendMessage(chatId, rendered);
       if (!sent) return false;
       this.virtualToRealMessage.set(key, sent);
       this.lastRenderedByMsg.set(this.flowMessageKey(chatId, sent), rendered);
+      await this.sendLocalFilesIfNeeded(
+        chatId,
+        sent,
+        markdown,
+        this.shouldSendLocalFilesNow(markdown, isStreaming, isFinal),
+      );
     }
     await this.clearPendingReactions(chatId);
     return true;
@@ -160,6 +218,28 @@ export class TelegramAdapter implements BridgeAdapter {
       return;
     }
     this.enqueuePendingReaction(chatId, messageRef);
+  }
+
+  async sendLocalFile(chatId: string, localPath: string): Promise<boolean> {
+    try {
+      const absPath = path.isAbsolute(localPath) ? localPath : path.resolve(process.cwd(), localPath);
+      const out = await this.client.sendDocument({
+        chatId,
+        absPath,
+        filename: path.basename(absPath),
+      });
+      const ok = Boolean(out);
+      bridgeLogger.info(
+        `[Telegram] command sendLocalFile chat=${chatId} path=${absPath} ok=${ok}`,
+      );
+      return ok;
+    } catch (err) {
+      bridgeLogger.warn(
+        `[Telegram] command sendLocalFile failed chat=${chatId} path=${localPath}`,
+        err,
+      );
+      return false;
+    }
   }
 
   private flowMessageKey(chatId: string, messageId: string): string {
@@ -209,6 +289,61 @@ export class TelegramAdapter implements BridgeAdapter {
       statusLine.includes('completed') ||
       statusLine.includes('aborted') ||
       statusLine.includes('error')
+    );
+  }
+
+  private shouldSendLocalFilesNow(markdown: string, isStreaming: boolean, isFinal: boolean): boolean {
+    if (!this.outgoingFileCfg.enabled) return false;
+    if (!this.isFlowDisplay(markdown)) return true;
+    if (isStreaming) return false;
+    return isFinal;
+  }
+
+  private localFileSignature(file: ResolvedLocalFile): string {
+    return `${file.absPath}|${file.size}|${file.mtimeMs}`;
+  }
+
+  private async sendLocalFilesIfNeeded(
+    chatId: string,
+    messageId: string,
+    markdown: string,
+    allowNow: boolean,
+  ): Promise<void> {
+    if (!allowNow) return;
+    const resolved = await resolveOutgoingLocalFiles(markdown, this.outgoingFileCfg);
+    if (resolved.files.length === 0) return;
+
+    const key = this.flowMessageKey(chatId, messageId);
+    const sent = this.sentFilesByMsg.get(key) || new Set<string>();
+    let sentCount = 0;
+    let skipCount = 0;
+    for (const file of resolved.files) {
+      const sig = this.localFileSignature(file);
+      if (sent.has(sig)) {
+        skipCount++;
+        continue;
+      }
+      try {
+        const out = await this.client.sendDocument({
+          chatId,
+          absPath: file.absPath,
+          filename: file.filename,
+          mime: file.mime,
+        });
+        if (out) {
+          sent.add(sig);
+          sentCount++;
+        }
+      } catch (err) {
+        bridgeLogger.warn(
+          `[Telegram] outgoing local file send failed chat=${chatId} msg=${messageId} path=${file.absPath}`,
+          err,
+        );
+      }
+    }
+    this.sentFilesByMsg.set(key, sent);
+    bridgeLogger.info(
+      `[Telegram] outgoing local files chat=${chatId} msg=${messageId} matched=${resolved.files.length} rejected=${resolved.rejected.length} sent=${sentCount} skipped=${skipCount}`,
     );
   }
 

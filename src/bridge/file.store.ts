@@ -103,6 +103,7 @@ function buildFilePath(chatKey: string, filename: string, mime: string): string 
 export async function saveFilePartToLocal(
   chatKey: string,
   part: FilePartInput,
+  options?: { enqueue?: boolean },
 ): Promise<SaveResult> {
   try {
     if (!part?.url) return { ok: false, error: 'missing url' };
@@ -157,9 +158,12 @@ export async function saveFilePartToLocal(
 
     seenByChat.set(digest, record);
 
-    const list = pendingFiles.get(chatKey) || [];
-    list.push(record);
-    pendingFiles.set(chatKey, list);
+    const enqueue = options?.enqueue !== false;
+    if (enqueue) {
+      const list = pendingFiles.get(chatKey) || [];
+      list.push(record);
+      pendingFiles.set(chatKey, list);
+    }
 
     bridgeLogger.info(
       `[FileStore] ✅ saved chat=${chatKey} name=${filename} size=${buffer.length} path=${destPath}`,
