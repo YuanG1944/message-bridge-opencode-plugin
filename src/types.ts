@@ -21,6 +21,8 @@ export interface BridgeAdapter {
   addReaction?(messageId: string, emojiType: string): Promise<string | null>;
 
   removeReaction?(messageId: string, reactionId: string): Promise<void>;
+
+  sendLocalFile?(chatId: string, localPath: string): Promise<boolean>;
 }
 
 export interface FeishuConfig {
@@ -29,6 +31,9 @@ export interface FeishuConfig {
   mode: 'ws' | 'webhook';
   callback_url?: string;
   encrypt_key?: string;
+  auto_send_local_files?: boolean;
+  auto_send_local_files_max_mb?: number;
+  auto_send_local_files_allow_absolute?: boolean;
 }
 
 export interface TelegramConfig {
@@ -37,5 +42,24 @@ export interface TelegramConfig {
   polling_timeout_sec: number;
   polling_interval_ms: number;
   callback_url?: string;
+  webhook_listen_port?: number;
   webhook_secret_token?: string;
+  auto_send_local_files?: boolean;
+  auto_send_local_files_max_mb?: number;
+  auto_send_local_files_allow_absolute?: boolean;
 }
+
+export type OutgoingFileConfig = {
+  enabled: boolean;
+  maxMb: number;
+  allowAbsolute: boolean;
+};
+
+export type ResolvedLocalFile = {
+  absPath: string;
+  filename: string;
+  mime: string;
+  size: number;
+  mtimeMs: number;
+  rawRef: string;
+};

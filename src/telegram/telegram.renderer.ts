@@ -186,12 +186,12 @@ export function renderTelegram(markdown: string): string {
   });
 
   text = escapeHtml(text);
-  text = text.replace(/^##\s+Command$/gm, '<b>🧭 Command</b>');
-  text = text.replace(/^##\s+Thinking$/gm, '<b>🤔 Thinking</b>');
-  text = text.replace(/^##\s+Tools(?:\s*\/\s*Steps)?$/gim, '<b>🧰 Tools / Steps</b>');
-  text = text.replace(/^##\s+Files$/gm, '<b>🖼️ Files</b>');
-  text = text.replace(/^##\s+Answer$/gm, '<b>📝 Answer</b>');
-  text = text.replace(/^##\s+Error$/gm, '<b>🚨 Error</b>');
+  text = text.replace(/^##\s+Command$/gm, '<b>🧭 Command</b>\n');
+  text = text.replace(/^##\s+Thinking$/gm, '<b>🤔 Thinking</b>\n');
+  text = text.replace(/^##\s+Tools(?:\s*\/\s*Steps)?$/gim, '<b>🧰 Tools / Steps</b>\n');
+  text = text.replace(/^##\s+Files$/gm, '<b>🖼️ Files</b>\n');
+  text = text.replace(/^##\s+Answer$/gm, '<b>📝 Answer</b>\n');
+  text = text.replace(/^##\s+Error$/gm, '<b>🚨 Error</b>\n');
   text = text.replace(/^###\s+(.+)$/gm, '<b>$1</b>');
   text = text.replace(/^##\s+(.+)$/gm, '<b>$1</b>');
   text = text.replace(/^#\s+(.+)$/gm, '<b>$1</b>');

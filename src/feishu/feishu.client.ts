@@ -5,6 +5,8 @@ import * as http from 'http';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as https from 'https';
+import * as fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import type { FeishuConfig, IncomingMessageHandler } from '../types';
 import type { FilePartInput } from '@opencode-ai/sdk';
@@ -17,7 +19,11 @@ import {
   sleep,
 } from '../utils';
 import { FeishuRenderer } from './feishu.renderer';
-import { fetchFeishuResourceToBuffer } from './patch';
+import {
+  fetchFeishuResourceToBuffer,
+  uploadFeishuFileBuffer,
+  uploadFeishuImageBuffer,
+} from './patch';
 import { LoggerLevel } from '@larksuiteoapi/node-sdk';
 
 function clip(s: string, n = 2000) {
@@ -371,6 +377,18 @@ export class FeishuClient {
         bridgeLogger.error('[Feishu] ❌ Download file failed:', e);
         return false;
       }
+    } else if (url.startsWith('file://') || path.isAbsolute(url)) {
+      try {
+        const absPath = url.startsWith('file://') ? fileURLToPath(url) : url;
+        buffer = await fs.readFile(absPath);
+        if (!finalName) finalName = path.basename(absPath);
+        bridgeLogger.info(
+          `[Feishu] ✅ local file loaded size=${buffer.length} path=${absPath} filename=${finalName}`,
+        );
+      } catch (e) {
+        bridgeLogger.error('[Feishu] ❌ Read local file failed:', e);
+        return false;
+      }
     } else {
       bridgeLogger.warn('[Feishu] ⚠️ Skip file: unsupported URL scheme.');
       return false;
@@ -388,15 +406,15 @@ export class FeishuClient {
         bridgeLogger.info(
           `[Feishu] ⬆️ uploading image size=${buffer.length} mime=${mime} name=${finalName}`,
         );
-        const resp = await this.runWithTenantRetry(options =>
-          this.apiClient.im.image.create(
-            {
-              data: { image_type: 'message', image: buffer },
-            },
-            options,
-          ),
-        );
-        const imageKey = resp?.image_key;
+        const imageKey = await this.runWithTenantRetry(async () => {
+          const tenantToken = await this.getTenantToken();
+          return uploadFeishuImageBuffer({
+            tenantToken,
+            buffer,
+            filename: finalName || 'image',
+            timeoutMs: 120000,
+          });
+        });
         bridgeLogger.info(`[Feishu] ✅ upload image ok image_key=${imageKey || ''}`);
         if (!imageKey) return false;
         return this.sendMediaMessage(chatId, 'image', { image_key: imageKey });
@@ -416,19 +434,16 @@ export class FeishuClient {
       bridgeLogger.info(
         `[Feishu] ⬆️ uploading file size=${buffer.length} mime=${mime} type=${fileType} name=${finalName}`,
       );
-      const resp = await this.runWithTenantRetry(options =>
-        this.apiClient.im.file.create(
-          {
-            data: {
-              file_type: fileType,
-              file_name: finalName || 'file',
-              file: buffer,
-            },
-          },
-          options,
-        ),
-      );
-      const fileKey = resp?.file_key;
+      const fileKey = await this.runWithTenantRetry(async () => {
+        const tenantToken = await this.getTenantToken();
+        return uploadFeishuFileBuffer({
+          tenantToken,
+          buffer,
+          filename: finalName || 'file',
+          fileType,
+          timeoutMs: 120000,
+        });
+      });
       bridgeLogger.info(`[Feishu] ✅ upload file ok file_key=${fileKey || ''}`);
       if (!fileKey) return false;
       return this.sendMediaMessage(chatId, 'file', { file_key: fileKey });

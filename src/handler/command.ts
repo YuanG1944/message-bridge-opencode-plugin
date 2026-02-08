@@ -77,6 +77,14 @@ function parseSessionDeleteArgs(rawArgs: string): { deleteAll: boolean; refs: st
   return { deleteAll: false, refs };
 }
 
+function parseSendFilePath(rawArgs: string): string {
+  const args = rawArgs.trim();
+  if (!args) return '';
+  const m = args.match(/^"(.*)"$/) || args.match(/^'(.*)'$/);
+  if (m?.[1]) return m[1].trim();
+  return args;
+}
+
 function toSessionList(raw: unknown): SessionListItem[] {
   return asNamedRecords(raw)
     .map(s => ({ id: s.id || '', title: s.title || 'Untitled' }))
@@ -115,6 +123,7 @@ export type CommandContext = {
   chatModel: Map<string, SelectedModel>;
   chatSessionList: Map<string, Array<SessionListItem>>;
   chatAgentList: Map<string, Array<AgentListItem>>;
+  chatAwaitingSaveFile: Map<string, boolean>;
   chatMaxFileSizeMb: Map<string, number>;
   chatMaxFileRetry: Map<string, number>;
   ensureSession: () => Promise<string>;
@@ -123,6 +132,7 @@ export type CommandContext = {
   sendErrorMessage: (content: string) => Promise<void>;
   sendUnsupported: () => Promise<void>;
   isKnownCustomCommand: (name: string) => Promise<boolean | null>;
+  sendLocalFile: (filePath: string) => Promise<boolean | null>;
 };
 
 export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> {
@@ -142,6 +152,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatModel,
     chatSessionList,
     chatAgentList,
+    chatAwaitingSaveFile,
     chatMaxFileSizeMb,
     chatMaxFileRetry,
     ensureSession,
@@ -149,6 +160,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     sendCommandMessage,
     sendUnsupported,
     isKnownCustomCommand,
+    sendLocalFile,
   } = ctx;
   bridgeLogger.info(
     `[Command] adapter=${ctx.adapterKey} chat=${ctx.chatId} cmd=/${slash.command} normalized=${normalizedCommand || '-'} args="${slash.arguments || ''}"`,
@@ -171,6 +183,8 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     lines.push('/sessions delete all - 删除全部会话，仅保留当前会话');
     lines.push('/maxFileSize <xmb> - 设置上传文件大小限制（默认10MB）');
     lines.push('/maxFileRetry <n> - 设置资源下载重试次数（默认3）');
+    lines.push('/savefile - 上传并保存文件到本地（不经过大模型）');
+    lines.push('/sendfile <path> - 直接通过 Bot 回传本地文件（强触发）');
     lines.push('/share - 分享当前会话');
     lines.push('/unshare - 取消分享');
     lines.push('/compact - 压缩/总结当前会话');
@@ -333,6 +347,31 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     }
     chatMaxFileRetry.set(chatId, value);
     await sendCommandMessage(`✅ 已设置重试次数：${value}`);
+    return true;
+  }
+
+  if (normalizedCommand === 'sendfile') {
+    const parsedPath = parseSendFilePath(slash.arguments || '');
+    if (!parsedPath) {
+      await sendCommandMessage('用法：/sendfile <path>');
+      return true;
+    }
+    const ok = await sendLocalFile(parsedPath);
+    if (ok === null) {
+      await sendCommandMessage('❌ 当前平台暂不支持 /sendfile。');
+      return true;
+    }
+    if (ok) {
+      await sendCommandMessage(`✅ 文件已发送：${parsedPath}`);
+      return true;
+    }
+    await sendCommandMessage(`❌ 文件发送失败：${parsedPath}`);
+    return true;
+  }
+
+  if (normalizedCommand === 'savefile') {
+    chatAwaitingSaveFile.set(cacheKey, true);
+    await sendCommandMessage('请上传文件，我会直接保存到本地并返回路径（不经过大模型）。');
     return true;
   }
 
@@ -520,6 +559,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatModel.clear();
     chatSessionList.clear();
     chatAgentList.clear();
+    chatAwaitingSaveFile.clear();
     chatMaxFileSizeMb.clear();
     chatMaxFileRetry.clear();
 

@@ -30,11 +30,23 @@ export function parseFeishuConfig(cfg: Config | undefined): FeishuConfig {
     throw new Error(`[Plugin] Missing options for ${AGENT_LARK}: app_id/app_secret`);
   }
 
+  const maxMbRaw = Number(options.auto_send_local_files_max_mb);
+  const auto_send_local_files =
+    options.auto_send_local_files === true || options.auto_send_local_files === 'true';
+  const auto_send_local_files_allow_absolute =
+    options.auto_send_local_files_allow_absolute === true ||
+    options.auto_send_local_files_allow_absolute === 'true';
+  const auto_send_local_files_max_mb =
+    Number.isFinite(maxMbRaw) && maxMbRaw > 0 ? maxMbRaw : 20;
+
   return {
     app_id,
     app_secret,
     mode,
     callback_url: callbackUrl,
     encrypt_key: typeof options.encrypt_key === 'string' ? options.encrypt_key : undefined,
+    auto_send_local_files,
+    auto_send_local_files_allow_absolute,
+    auto_send_local_files_max_mb,
   };
 }

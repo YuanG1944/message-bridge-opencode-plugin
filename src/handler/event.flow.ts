@@ -50,6 +50,7 @@ export type EventFlowDeps = {
   chatModel: Map<string, SelectedModel>;
   chatSessionList: Map<string, Array<{ id: string; title: string }>>;
   chatAgentList: Map<string, Array<{ id: string; name: string }>>;
+  chatAwaitingSaveFile: Map<string, boolean>;
   chatMaxFileSizeMb: Map<string, number>;
   chatMaxFileRetry: Map<string, number>;
 };
@@ -443,6 +444,7 @@ export function stopGlobalEventListenerWithDeps(deps: EventFlowDeps) {
   deps.chatModel.clear();
   deps.chatSessionList.clear();
   deps.chatAgentList.clear();
+  deps.chatAwaitingSaveFile.clear();
   deps.chatMaxFileSizeMb.clear();
   deps.chatMaxFileRetry.clear();
 }

@@ -1,5 +1,5 @@
 {
-  "name": "opencode-plugin-feishu-bridge",
+  "name": "message-bridge-opencode-plugin",
   "version": "1.0.0",
   "description": "Feishu Bridge Plugin for OpenCode",
   "main": "index.ts",
@@ -9,33 +9,34 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/YuanG1944/lark-bot-bridge-opencode-plugin"
+    "url": "https://github.com/YuanG1944/message-bridge-opencode-plugin"
   },
   "bugs": {
-    "url": "https://github.com/YuanG1944/lark-bot-bridge-opencode-plugin/issues"
+    "url": "https://github.com/YuanG1944/message-bridge-opencode-plugin/issues"
   },
-  "homepage": "https://github.com/YuanG1944/lark-bot-bridge-opencode-plugin",
+  "homepage": "https://github.com/YuanG1944/message-bridge-opencode-plugin",
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
     "opencode",
-    "feishu"
+    "feishu",
+    "telegram"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.26.0",
-    "dotenv": "^16.4.5"
+    "axios": "^1.13.4"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "latest",
-    "@opencode-ai/sdk": "latest"
+    "@opencode-ai/plugin": "^1.1.48",
+    "@opencode-ai/sdk": "^1.1.48"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "latest",
-    "@opencode-ai/sdk": "latest",
+    "@opencode-ai/plugin": "1.1.48",
+    "@opencode-ai/sdk": "1.1.48",
     "@types/node": "^20.0.0",
     "typescript": "^5.9.3"
   }

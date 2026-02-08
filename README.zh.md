@@ -102,6 +102,8 @@ UI 相关命令（主题/编辑器/退出等）**不适合聊天场景**，因�
 * `/sessions` → 列出会话（回复 `/sessions <id>` 切换）
 * `/maxFileSize <xmb>` → 设置上传文件大小限制（默认 10MB）
 * `/maxFileRetry <n>` → 设置资源下载重试次数（默认 3）
+* `/savefile` → 进入“直接保存上传文件”模式（不经过大模型）
+* `/sendfile <path>` → 按本地路径强制回传文件
 * `/share` / `/unshare`
 * `/compact`（别名 `/summarize`）
 * `/init`
@@ -130,6 +132,15 @@ UI 相关命令（主题/编辑器/退出等）**不适合聊天场景**，因�
 文件上传大小限制可通过 `/maxFileSize <xmb>` 调整（默认 10MB）。
 
 如果你的 OpenCode 环境提供了其它 slash 命令，且未在上面专门适配，则仍会走 `session.command` 透传。
+
+### 本地文件直传/直存（不走 LLM）
+
+插件提供两条直接文件能力：
+
+* `/sendfile <path>`：根据本地路径直接通过 Bot 回传文件。
+* `/savefile`：进入上传等待态；你下一条上传的文件会直接保存到本地并返回路径。
+
+以上流程都由桥接层直接处理，不经过大模型。
 
 ---
 
@@ -179,6 +190,13 @@ npm install message-bridge-opencode-plugin
 - Telegram 配置
 
   [快速开始 🔗 ](https://github.com/YuanG1944/message-bridge-opencode-plugin/tree/main/config-guide/telegram/GUIDE.zh.md)
+
+可选文件桥配置（`agent.message-bridge.options`）：
+
+* `auto_send_local_files`（`"true"` / `"false"`，默认 `false`）
+* `auto_send_local_files_max_mb`（默认 `20`）
+* `auto_send_local_files_allow_absolute`（`"true"` / `"false"`，默认 `false`）
+* `webhook_listen_port`（Telegram webhook 本地监听端口，可选；回退顺序：callback_url 端口 -> `18080`）
 
 ## 🚧 当前必须使用开发模式
 

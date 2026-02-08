@@ -1,6 +1,8 @@
 import type { IncomingMessageHandler, TelegramConfig } from '../types';
 import type { FilePartInput } from '@opencode-ai/sdk';
 import * as http from 'node:http';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { bridgeLogger } from '../logger';
 import { runtimeInstanceId, sleep } from '../utils';
 
@@ -165,6 +167,7 @@ export class TelegramClient {
   private webhookPath = '/telegram/webhook';
   private readonly instanceTag = `pid=${process.pid} instance=${runtimeInstanceId}`;
   private readonly incomingMessageChatMap = new Map<string, string>();
+  private readonly ambiguousIncomingMessageIds = new Set<string>();
 
   constructor(config: TelegramConfig) {
     this.config = config;
@@ -281,6 +284,23 @@ export class TelegramClient {
     return Boolean(res);
   }
 
+  async sendDocument(params: {
+    chatId: string;
+    absPath: string;
+    filename?: string;
+    mime?: string;
+  }): Promise<string | null> {
+    const filename = params.filename || path.basename(params.absPath) || 'file';
+    const mime = params.mime || inferMimeFromFilename(filename);
+    const data = await fs.readFile(params.absPath);
+    const form = new FormData();
+    form.append('chat_id', params.chatId);
+    form.append('document', new Blob([data], { type: mime }), filename);
+
+    const res = await this.apiCallMultipart<TelegramMessage>('sendDocument', form);
+    return res ? String(res.message_id) : null;
+  }
+
   async setReaction(chatId: string, messageId: string, emoji: string): Promise<boolean> {
     const res = await this.apiCall<boolean>('setMessageReaction', {
       chat_id: chatId,
@@ -302,18 +322,19 @@ export class TelegramClient {
   }
 
   async setReactionByIncomingMessageId(messageId: string, emoji: string): Promise<boolean> {
-    const chatId = this.incomingMessageChatMap.get(messageId);
+    const chatId = this.getChatIdByIncomingMessageId(messageId);
     if (!chatId) return false;
     return this.setReaction(chatId, messageId, emoji);
   }
 
   async clearReactionByIncomingMessageId(messageId: string): Promise<boolean> {
-    const chatId = this.incomingMessageChatMap.get(messageId);
+    const chatId = this.getChatIdByIncomingMessageId(messageId);
     if (!chatId) return false;
     return this.clearReaction(chatId, messageId);
   }
 
   getChatIdByIncomingMessageId(messageId: string): string | null {
+    if (this.ambiguousIncomingMessageIds.has(messageId)) return null;
     return this.incomingMessageChatMap.get(messageId) || null;
   }
 
@@ -473,7 +494,14 @@ export class TelegramClient {
     const callback = new URL(this.config.callback_url);
     this.webhookPath =
       callback.pathname && callback.pathname !== '/' ? callback.pathname : '/telegram/webhook';
-    const port = callback.port ? Number(callback.port) : callback.protocol === 'https:' ? 443 : 80;
+    const configuredPort = this.config.webhook_listen_port;
+    const callbackPort = callback.port ? Number(callback.port) : NaN;
+    const port =
+      typeof configuredPort === 'number' && Number.isFinite(configuredPort) && configuredPort > 0
+        ? configuredPort
+        : Number.isFinite(callbackPort) && callbackPort > 0
+          ? callbackPort
+          : 18080;
     const host = this.resolveWebhookHost(callback.hostname);
 
     this.webhookServer = http.createServer((req, res) => {
@@ -641,10 +669,24 @@ export class TelegramClient {
     const chatId = String(message.chat.id);
     const messageId = String(message.message_id);
     const senderId = String(message.from?.id ?? message.chat.id);
-    this.incomingMessageChatMap.set(messageId, chatId);
+    const knownChatId = this.incomingMessageChatMap.get(messageId);
+    if (!knownChatId) {
+      if (!this.ambiguousIncomingMessageIds.has(messageId)) {
+        this.incomingMessageChatMap.set(messageId, chatId);
+      }
+    } else if (knownChatId !== chatId) {
+      this.incomingMessageChatMap.delete(messageId);
+      this.ambiguousIncomingMessageIds.add(messageId);
+      bridgeLogger.warn(
+        `[Telegram] reaction map collision msg=${messageId} oldChat=${knownChatId} newChat=${chatId}`,
+      );
+    }
     if (this.incomingMessageChatMap.size > 2000) {
       const first = this.incomingMessageChatMap.keys().next().value;
       if (first) this.incomingMessageChatMap.delete(first);
+    }
+    if (this.ambiguousIncomingMessageIds.size > 2000) {
+      this.ambiguousIncomingMessageIds.clear();
     }
 
     bridgeLogger.info(
@@ -666,6 +708,19 @@ export class TelegramClient {
       ...(signal ? { signal } : {}),
     });
 
+    const json = (await resp.json()) as TelegramApiResponse<T>;
+    if (!resp.ok || !json.ok) {
+      throw new Error(`[Telegram] ${method} failed: ${json.description || resp.statusText}`);
+    }
+    return json.result ?? null;
+  }
+
+  private async apiCallMultipart<T>(method: string, form: FormData): Promise<T | null> {
+    const url = `${this.baseUrl}/${method}`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      body: form,
+    });
     const json = (await resp.json()) as TelegramApiResponse<T>;
     if (!resp.ok || !json.ok) {
       throw new Error(`[Telegram] ${method} failed: ${json.description || resp.statusText}`);
