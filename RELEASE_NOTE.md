@@ -46,7 +46,7 @@
 - Session/agent/model state handling is now clearer in status output.
 - Model display in status/footer was simplified to reduce noise.
 - `/new` now keeps the last selected agent/model for the same chat binding.
-- New session initialization now defaults to `plan` only when no previous agent selection exists.
+- New session initialization now defaults to `build` only when no previous agent selection exists.
 - Bugfix ([#2](https://github.com/YuanG1944/message-bridge-opencode-plugin/issues/2)):
   - fixed `/new` incorrectly clearing existing chat state
   - now `/new` inherits previous agent/model instead of resetting all state

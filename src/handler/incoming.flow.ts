@@ -18,7 +18,7 @@ type SessionContext = { chatId: string; senderId: string };
 type SelectedModel = { providerID: string; modelID: string; name?: string };
 type NamedRecord = { id?: string; name?: string; title?: string; description?: string };
 type DataEnvelope = { data?: unknown };
-const DEFAULT_AGENT_ID = 'plan';
+const DEFAULT_AGENT_ID = 'build';
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null;
