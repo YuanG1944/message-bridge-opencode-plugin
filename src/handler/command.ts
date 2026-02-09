@@ -105,6 +105,32 @@ function resolveSessionRefs(refs: string[], sessions: SessionListItem[]): string
   return Array.from(ids);
 }
 
+function ensureUniqueSessionTitle(
+  desiredTitle: string,
+  sessions: SessionListItem[],
+  currentSessionId: string,
+): string {
+  const base = desiredTitle.trim();
+  if (!base) return desiredTitle;
+
+  const used = new Set(
+    sessions
+      .filter(s => s.id !== currentSessionId)
+      .map(s => s.title.trim())
+      .filter(Boolean),
+  );
+
+  if (!used.has(base)) return base;
+
+  let suffix = 2;
+  let candidate = base + ' (' + suffix + ')';
+  while (used.has(candidate)) {
+    suffix++;
+    candidate = base + ' (' + suffix + ')';
+  }
+  return candidate;
+}
+
 export type CommandContext = {
   api: OpencodeClient;
   adapterKey: string;
@@ -127,6 +153,7 @@ export type CommandContext = {
   chatMaxFileSizeMb: Map<string, number>;
   chatMaxFileRetry: Map<string, number>;
   clearPendingQuestionForChat: (cacheKey: string) => void;
+  markQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => void;
   clearAllPendingQuestions: () => void;
   ensureSession: () => Promise<string>;
   createNewSession: () => Promise<string | undefined>;
@@ -181,6 +208,8 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     lines.push('/models - 查看可用模型（/models <序号> 切换）');
     lines.push('/status - 查看桥接运行状态（PID/启动时间）');
     lines.push('/new - 新建会话并切换');
+    lines.push('/rename <title> - 重命名当前会话');
+    lines.push('/abort - 强制终止当前会话生成');
     lines.push('/reset (/restart) - 清空桥接运行态并新建会话');
     lines.push('/sessions - 列出会话（用 /sessions <id> 或 /sessions <序号> 切换）');
     lines.push('/sessions delete 1,2,3 - 批量删除会话（序号或id）');
@@ -543,6 +572,45 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     const sessionId = await ensureSession();
     await api.session.init({ path: { id: sessionId } });
     await sendCommandMessage('✅ 已触发初始化（AGENTS.md）。');
+    return true;
+  }
+
+  if (normalizedCommand === 'rename') {
+    const nextTitle = slash.arguments.trim();
+    if (!nextTitle) {
+      await sendCommandMessage('用法：/rename <新会话名称>');
+      return true;
+    }
+
+    const sessionId = await ensureSession();
+    const listRes = await api.session.list({});
+    const sessions = toSessionList(extractData(listRes));
+    const uniqueTitle = ensureUniqueSessionTitle(nextTitle, sessions, sessionId);
+
+    await api.session.update({
+      path: { id: sessionId },
+      body: { title: uniqueTitle },
+    });
+
+    const list = chatSessionList.get(cacheKey);
+    if (list && list.length > 0) {
+      const hit = list.find(item => item.id === sessionId);
+      if (hit) hit.title = uniqueTitle;
+    }
+
+    if (uniqueTitle !== nextTitle) {
+      await sendCommandMessage(`✅ 会话名重复，已自动重命名为：${uniqueTitle}`);
+      return true;
+    }
+
+    await sendCommandMessage(`✅ 已重命名当前会话：${uniqueTitle}`);
+    return true;
+  }
+
+  if (normalizedCommand === 'abort') {
+    const sessionId = await ensureSession();
+    await api.session.abort({ path: { id: sessionId } });
+    await sendCommandMessage(`🛑 已请求终止当前会话生成：${sessionId}`);
     return true;
   }
 

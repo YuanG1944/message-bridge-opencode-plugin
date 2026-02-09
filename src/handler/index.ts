@@ -27,10 +27,39 @@ const chatMaxFileRetry: Map<string, number> =
   globalState.__bridge_max_file_retry || new Map<string, number>();
 const chatPendingQuestion = new Map<string, PendingQuestionState>();
 const pendingQuestionTimers = new Map<string, NodeJS.Timeout>();
+const chatHandledQuestionCalls = new Map<string, Set<string>>();
 globalState.__bridge_max_file_size = chatMaxFileSizeMb;
 globalState.__bridge_max_file_retry = chatMaxFileRetry;
 
 const listenerState = { isListenerStarted: false, shouldStopListener: false };
+
+function buildQuestionCallToken(messageId: string, callID: string): string {
+  return `${messageId}::${callID}`;
+}
+
+function markQuestionCallHandled(cacheKey: string, messageId: string, callID: string) {
+  const token = buildQuestionCallToken(messageId, callID);
+  const set = chatHandledQuestionCalls.get(cacheKey) || new Set<string>();
+  set.add(token);
+  if (set.size > 200) {
+    const first = set.values().next().value as string | undefined;
+    if (first) set.delete(first);
+  }
+  chatHandledQuestionCalls.set(cacheKey, set);
+}
+
+function isQuestionCallHandled(cacheKey: string, messageId: string, callID: string): boolean {
+  const token = buildQuestionCallToken(messageId, callID);
+  return chatHandledQuestionCalls.get(cacheKey)?.has(token) === true;
+}
+
+function clearHandledQuestionCallsForChat(cacheKey: string) {
+  chatHandledQuestionCalls.delete(cacheKey);
+}
+
+function clearAllHandledQuestionCalls() {
+  chatHandledQuestionCalls.clear();
+}
 
 function formatUserError(err: unknown): string {
   const e = err as { message?: string; data?: { message?: string } };
@@ -56,6 +85,7 @@ function clearAllPendingQuestions() {
   }
   pendingQuestionTimers.clear();
   chatPendingQuestion.clear();
+  clearAllHandledQuestionCalls();
 }
 
 export async function startGlobalEventListener(api: OpencodeClient, mux: AdapterMux) {
@@ -76,6 +106,8 @@ export async function startGlobalEventListener(api: OpencodeClient, mux: Adapter
     chatMaxFileRetry,
     chatPendingQuestion,
     pendingQuestionTimers,
+    isQuestionCallHandled,
+    markQuestionCallHandled,
   });
 }
 
@@ -97,6 +129,8 @@ export function stopGlobalEventListener() {
     chatMaxFileRetry,
     chatPendingQuestion,
     pendingQuestionTimers,
+    isQuestionCallHandled,
+    markQuestionCallHandled,
   });
 }
 
@@ -114,6 +148,7 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
     chatMaxFileRetry,
     chatPendingQuestion,
     clearPendingQuestionForChat,
+    markQuestionCallHandled,
     clearAllPendingQuestions,
     formatUserError,
   });

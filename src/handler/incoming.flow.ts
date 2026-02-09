@@ -77,6 +77,7 @@ export type IncomingFlowDeps = {
   chatMaxFileRetry: Map<string, number>;
   chatPendingQuestion: Map<string, PendingQuestionState>;
   clearPendingQuestionForChat: (cacheKey: string) => void;
+  markQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => void;
   clearAllPendingQuestions: () => void;
   formatUserError: (err: unknown) => string;
 };
@@ -215,6 +216,7 @@ export const createIncomingHandlerWithDeps = (
           chatMaxFileSizeMb: deps.chatMaxFileSizeMb,
           chatMaxFileRetry: deps.chatMaxFileRetry,
           clearPendingQuestionForChat: deps.clearPendingQuestionForChat,
+          markQuestionCallHandled: deps.markQuestionCallHandled,
           clearAllPendingQuestions: deps.clearAllPendingQuestions,
           ensureSession,
           createNewSession,
@@ -236,28 +238,32 @@ export const createIncomingHandlerWithDeps = (
 
         const resolved = parseUserReply(text, pendingQuestion);
         if (!resolved.ok) {
-          await adapter.sendMessage(chatId, renderReplyHint(pendingQuestion));
+          deps.markQuestionCallHandled(cacheKey, pendingQuestion.messageId, pendingQuestion.callID);
+          deps.clearPendingQuestionForChat(cacheKey);
+          bridgeLogger.info(
+            `[QuestionFlow] invalid-option-exit adapter=${adapterKey} chat=${chatId} sid=${pendingQuestion.sessionId} call=${pendingQuestion.callID} reason=${resolved.reason}`,
+          );
+        } else {
+          deps.markQuestionCallHandled(cacheKey, pendingQuestion.messageId, pendingQuestion.callID);
+          deps.clearPendingQuestionForChat(cacheKey);
+          await adapter.sendMessage(chatId, renderAnswerSummary(pendingQuestion, resolved.answers, 'user'));
+
+          const sessionId = await ensureSession();
+          deps.sessionToAdapterKey.set(sessionId, adapterKey);
+          deps.sessionToCtx.set(sessionId, { chatId, senderId });
+
+          const agent = deps.chatAgent.get(cacheKey);
+          const model = deps.chatModel.get(cacheKey);
+          await api.session.prompt({
+            path: { id: sessionId },
+            body: {
+              parts: [{ type: 'text', text: buildResumePrompt(pendingQuestion, resolved.answers, 'user') }],
+              ...(agent ? { agent } : {}),
+              ...(model ? { model: { providerID: model.providerID, modelID: model.modelID } } : {}),
+            },
+          });
           return;
         }
-
-        deps.clearPendingQuestionForChat(cacheKey);
-        await adapter.sendMessage(chatId, renderAnswerSummary(pendingQuestion, resolved.answers, 'user'));
-
-        const sessionId = await ensureSession();
-        deps.sessionToAdapterKey.set(sessionId, adapterKey);
-        deps.sessionToCtx.set(sessionId, { chatId, senderId });
-
-        const agent = deps.chatAgent.get(cacheKey);
-        const model = deps.chatModel.get(cacheKey);
-        await api.session.prompt({
-          path: { id: sessionId },
-          body: {
-            parts: [{ type: 'text', text: buildResumePrompt(pendingQuestion, resolved.answers, 'user') }],
-            ...(agent ? { agent } : {}),
-            ...(model ? { model: { providerID: model.providerID, modelID: model.modelID } } : {}),
-          },
-        });
-        return;
       }
 
       const fileParts = (parts || []).filter(isFilePartInput);

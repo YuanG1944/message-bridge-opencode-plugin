@@ -34,6 +34,7 @@ import {
 } from './execution.flow';
 import {
   extractQuestionPayload,
+  isQuestionToolError,
   isQuestionToolPart,
   QUESTION_TIMEOUT_MS,
   renderQuestionPrompt,
@@ -64,6 +65,8 @@ export type EventFlowDeps = {
   chatMaxFileRetry: Map<string, number>;
   chatPendingQuestion: Map<string, PendingQuestionState>;
   pendingQuestionTimers: Map<string, NodeJS.Timeout>;
+  isQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => boolean;
+  markQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => void;
 };
 
 function clearPendingQuestionForChat(deps: EventFlowDeps, cacheKey: string) {
@@ -123,6 +126,8 @@ async function captureQuestionProxyIfNeeded(params: {
 
   const { cacheKey, adapterKey, chatId } = sessionCtx;
   const callID = part.callID || `question-${messageId}`;
+  if (deps.isQuestionCallHandled(cacheKey, messageId, callID)) return false;
+
   const existing = deps.chatPendingQuestion.get(cacheKey);
   if (existing && existing.callID === callID && existing.messageId === messageId) {
     return true;
@@ -153,6 +158,7 @@ async function captureQuestionProxyIfNeeded(params: {
     const current = deps.chatPendingQuestion.get(cacheKey);
     if (!current || current.callID !== callID || current.messageId !== messageId) return;
 
+    deps.markQuestionCallHandled(cacheKey, messageId, callID);
     clearPendingQuestionForChat(deps, cacheKey);
     const currentAdapter = mux.get(current.adapterKey);
     if (currentAdapter) {

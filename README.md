@@ -106,6 +106,8 @@ These are implemented directly against OpenCode APIs:
 * `/help` → list custom commands
 * `/models` → list providers and models (`/models <providerIndex.modelIndex>` to switch)
 * `/new` → create and bind to a new session
+* `/rename <title>` → rename current session (auto-add suffix like ` (2)` if duplicated)
+* `/abort` → force-abort current session generation
 * `/reset` / `/restart` → reset bridge runtime state and create a new session
 * `/status` → show runtime status (session / agent / model / pid / uptime)
 * `/sessions` → list sessions (reply with `/sessions <id>` or `/sessions <index>` to bind)

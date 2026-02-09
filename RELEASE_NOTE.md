@@ -128,3 +128,15 @@
 - Added debug logs for real `question` tool payload inspection:
   - logs `status`, `input`, and `error` (with safe truncation)
   - logs explicit `payload-parse-failed` when normalization fails
+
+
+## Command Additions (2026-02-09 Update)
+
+- Added `/rename <title>` command:
+  - renames the current session title
+  - avoids title collisions by auto-appending numeric suffixes (` (2)`, ` (3)`, ...)
+- Added `/abort` command:
+  - force-aborts current session generation via `session.abort`
+- Question flow stability updates:
+  - invalid option reply now exits `awaiting-user-reply` and continues normal prompt flow
+  - dedupe guard added for repeated question tool call events to prevent re-locking on the same call

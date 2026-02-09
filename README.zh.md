@@ -99,6 +99,8 @@ UI 相关命令（主题/编辑器/退出等）**不适合聊天场景**，因�
 * `/help` → 列出自定义命令
 * `/models` → 列出 provider 与模型
 * `/new` → 创建并绑定新会话
+* `/rename <title>` → 重命名当前会话（若重名自动追加 ` (2)`、` (3)`）
+* `/abort` → 强制终止当前会话生成
 * `/sessions` → 列出会话（回复 `/sessions <id>` 切换）
 * `/maxFileSize <xmb>` → 设置上传文件大小限制（默认 10MB）
 * `/maxFileRetry <n>` → 设置资源下载重试次数（默认 3）
