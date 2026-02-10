@@ -391,6 +391,7 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
 
       const ensureSession = async () => {
         let sessionId = sessionCache.get(cacheKey);
+        
         if (!sessionId) {
           sessionId = await createNewSession();
         }
@@ -530,7 +531,8 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
       }
 
       const sessionId = await ensureSession();
-      // ✅ 绑定：这个 session 的输出回到哪个平台
+      
+      // 绑定：这个 session 的输出回到哪个平台
       sessionToAdapterKey.set(sessionId, adapterKey);
       sessionToCtx.set(sessionId, { chatId, senderId });
 
