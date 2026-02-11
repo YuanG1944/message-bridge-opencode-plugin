@@ -47,6 +47,8 @@ type ListenerState = { isListenerStarted: boolean; shouldStopListener: boolean }
 type EventWithType = { type: string; properties?: unknown };
 type EventMessageBuffer = MessageBuffer & { __executionCarried?: boolean };
 const QUESTION_DEBUG_MAX_LEN = 4000;
+const ROUTE_MISS_WARN_INTERVAL_MS = 30_000;
+const lastRouteMissWarnAt = new Map<string, number>();
 
 export type EventFlowDeps = {
   listenerState: ListenerState;
@@ -98,6 +100,68 @@ function getCacheKeyBySession(
     adapterKey,
     chatId: ctx.chatId,
   };
+}
+
+function readStringField(obj: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function warnRouteMissOnce(eventType: string, sessionId: string, messageId?: string): void {
+  const key = `${eventType}:${sessionId}`;
+  const now = Date.now();
+  const last = lastRouteMissWarnAt.get(key) ?? 0;
+  if (now - last < ROUTE_MISS_WARN_INTERVAL_MS) {
+    return;
+  }
+  lastRouteMissWarnAt.set(key, now);
+  bridgeLogger.warn(
+    `[BridgeFlow] route.miss event=${eventType} sid=${sessionId} mid=${messageId || '-'} (session has no chat mapping in memory)`,
+  );
+}
+
+function hydrateSessionRouteFromMetadata(
+  sessionId: string,
+  metadata: unknown,
+  deps: EventFlowDeps,
+): boolean {
+  if (!metadata || typeof metadata !== 'object') {
+    return false;
+  }
+  const root = metadata as Record<string, unknown>;
+  const nested =
+    root.route && typeof root.route === 'object'
+      ? (root.route as Record<string, unknown>)
+      : undefined;
+  const source = nested ?? root;
+
+  const chatId = readStringField(source, 'chat_id', 'chatId');
+  const adapterKey = readStringField(source, 'adapter_key', 'adapterKey', 'adapter');
+  const senderId = readStringField(source, 'sender_id', 'senderId') ?? 'system';
+
+  if (!chatId || !adapterKey) {
+    return false;
+  }
+
+  const existingCtx = deps.sessionToCtx.get(sessionId);
+  const existingAdapter = deps.sessionToAdapterKey.get(sessionId);
+  if (!existingCtx) {
+    deps.sessionToCtx.set(sessionId, { chatId, senderId });
+  }
+  if (!existingAdapter) {
+    deps.sessionToAdapterKey.set(sessionId, adapterKey);
+  }
+  if (!existingCtx || !existingAdapter) {
+    bridgeLogger.info(
+      `[BridgeFlow] hydrated-session-route sid=${sessionId} adapter=${adapterKey} chat=${chatId}`,
+    );
+  }
+  return true;
 }
 
 function clipDebugText(value: string, max = QUESTION_DEBUG_MAX_LEN): string {
@@ -253,7 +317,10 @@ async function handleMessageUpdatedEvent(
   const mid = info.id as string;
 
   const target = resolveSessionTarget(sid, mux, deps);
-  if (!target) return;
+  if (!target) {
+    warnRouteMissOnce('message.updated', sid, mid);
+    return;
+  }
   const { ctx, adapter } = target;
 
   const activeMid = deps.sessionActiveMsg.get(sid);
@@ -319,8 +386,16 @@ async function handleMessagePartUpdatedEvent(
   if (!sessionId || !messageId) return;
   if (deps.msgRole.get(messageId) === 'user') return;
 
+  const partMeta = (part as { metadata?: unknown }).metadata;
+  if (partMeta) {
+    hydrateSessionRouteFromMetadata(sessionId, partMeta, deps);
+  }
+
   const target = resolveSessionTarget(sessionId, mux, deps);
-  if (!target) return;
+  if (!target) {
+    warnRouteMissOnce('message.part.updated', sessionId, messageId);
+    return;
+  }
   const { ctx, adapter } = target;
   const adapterKey = deps.sessionToAdapterKey.get(sessionId);
   const cacheKey = adapterKey ? `${adapterKey}:${ctx.chatId}` : '';
@@ -444,7 +519,10 @@ async function handleSessionErrorEvent(
   if (!sid) return;
 
   const target = resolveSessionTarget(sid, mux, deps);
-  if (!target) return;
+  if (!target) {
+    warnRouteMissOnce('session.error', sid);
+    return;
+  }
   const { ctx, adapter } = target;
   const mid = deps.sessionActiveMsg.get(sid);
   if (!mid) return;
@@ -478,7 +556,10 @@ async function handleSessionIdleEvent(
   if (!sid) return;
 
   const target = resolveSessionTarget(sid, mux, deps);
-  if (!target) return;
+  if (!target) {
+    warnRouteMissOnce('session.idle', sid);
+    return;
+  }
   const { ctx, adapter } = target;
   const mid = deps.sessionActiveMsg.get(sid);
   if (!mid) return;

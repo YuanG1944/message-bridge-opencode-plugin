@@ -64,6 +64,24 @@ function normalizeSlashCommand(command?: string): string | undefined {
   return aliasMap[command] || command;
 }
 
+function buildBridgePartMetadata(input: {
+  adapterKey: string;
+  chatId: string;
+  senderId: string;
+  sessionId: string;
+  source: 'bridge.incoming' | 'bridge.question.resume';
+}) {
+  return {
+    bridge: true,
+    source: input.source,
+    adapter_key: input.adapterKey,
+    chat_id: input.chatId,
+    sender_id: input.senderId,
+    session_id: input.sessionId,
+    routed_at: new Date().toISOString(),
+  } as const;
+}
+
 export type IncomingFlowDeps = {
   sessionCache: Map<string, string>;
   sessionToAdapterKey: Map<string, string>;
@@ -257,7 +275,19 @@ export const createIncomingHandlerWithDeps = (
           await api.session.prompt({
             path: { id: sessionId },
             body: {
-              parts: [{ type: 'text', text: buildResumePrompt(pendingQuestion, resolved.answers, 'user') }],
+              parts: [
+                {
+                  type: 'text',
+                  text: buildResumePrompt(pendingQuestion, resolved.answers, 'user'),
+                  metadata: buildBridgePartMetadata({
+                    adapterKey,
+                    chatId,
+                    senderId,
+                    sessionId,
+                    source: 'bridge.question.resume',
+                  }),
+                },
+              ],
               ...(agent ? { agent } : {}),
               ...(model ? { model: { providerID: model.providerID, modelID: model.modelID } } : {}),
             },
@@ -368,7 +398,17 @@ export const createIncomingHandlerWithDeps = (
       const model = deps.chatModel.get(cacheKey);
       const partList: Array<TextPartInput | FilePartInput> = [];
       if (text && text.trim()) {
-        partList.push({ type: 'text', text });
+        partList.push({
+          type: 'text',
+          text,
+          metadata: buildBridgePartMetadata({
+            adapterKey,
+            chatId,
+            senderId,
+            sessionId,
+            source: 'bridge.incoming',
+          }),
+        });
       }
       const pendingFiles = await drainPendingFileParts(cacheKey);
       if (pendingFiles.length > 0) {
