@@ -239,6 +239,7 @@ export const createIncomingHandlerWithDeps = (
         deps.clearPendingAuthorizationForChat(cacheKey);
 
         const pending: PendingAuthorizationState = {
+          mode: 'session_blocked',
           key: cacheKey,
           adapterKey,
           chatId,
@@ -300,7 +301,13 @@ export const createIncomingHandlerWithDeps = (
 
       const pendingAuthorization = deps.chatPendingAuthorization.get(cacheKey);
       if (pendingAuthorization && !slash) {
-        const decision = parseAuthorizationReply(text || '');
+        let decision = parseAuthorizationReply(text || '');
+        if (pendingAuthorization.mode === 'session_blocked') {
+          if (decision === 'allow_once') decision = 'resume_blocked';
+          if (decision === 'allow_always' || decision === 'reject_permission') {
+            decision = 'start_new_session';
+          }
+        }
         const hasPayload = hasText || ((parts || []).length > 0);
 
         if (decision === 'empty' && !hasPayload) {
@@ -308,9 +315,52 @@ export const createIncomingHandlerWithDeps = (
           return;
         }
 
-        if (decision === 'resume_blocked') {
+        if (pendingAuthorization.mode === 'permission_request') {
+          if (
+            decision === 'allow_once' ||
+            decision === 'allow_always' ||
+            decision === 'reject_permission'
+          ) {
+            if (!pendingAuthorization.permissionID) {
+              deps.clearPendingAuthorizationForChat(cacheKey);
+              await adapter.sendMessage(chatId, `${ERROR_HEADER}\n权限请求缺少 permissionID，已取消。`);
+              return;
+            }
+            const response =
+              decision === 'allow_once'
+                ? 'once'
+                : decision === 'allow_always'
+                  ? 'always'
+                  : 'reject';
+            await api.postSessionIdPermissionsPermissionId({
+              path: {
+                id: pendingAuthorization.sessionId,
+                permissionID: pendingAuthorization.permissionID,
+              },
+              body: { response },
+            });
+            deps.clearPendingAuthorizationForChat(cacheKey);
+            const statusMode =
+              decision === 'allow_once'
+                ? 'permission-once'
+                : decision === 'allow_always'
+                  ? 'permission-always'
+                  : 'permission-reject';
+            await adapter.sendMessage(chatId, renderAuthorizationStatus(statusMode)).catch(() => {});
+            return;
+          }
+
+          deps.clearPendingAuthorizationForChat(cacheKey);
+          const nextSessionId = await createNewSession();
+          if (!nextSessionId) throw new Error('Failed to init Session');
+          await adapter.sendMessage(chatId, renderAuthorizationStatus('switch-new')).catch(() => {});
+          if (decision === 'start_new_session') return;
+        } else if (decision === 'resume_blocked') {
           try {
-            await submitPrompt(pendingAuthorization.sessionId, pendingAuthorization.deferredParts);
+            await submitPrompt(
+              pendingAuthorization.sessionId,
+              pendingAuthorization.deferredParts || [],
+            );
             deps.clearPendingAuthorizationForChat(cacheKey);
             await adapter.sendMessage(chatId, renderAuthorizationStatus('resume')).catch(() => {});
           } catch (resumeErr) {
@@ -321,15 +371,15 @@ export const createIncomingHandlerWithDeps = (
             throw resumeErr;
           }
           return;
-        }
+        } else {
+          deps.clearPendingAuthorizationForChat(cacheKey);
+          const nextSessionId = await createNewSession();
+          if (!nextSessionId) throw new Error('Failed to init Session');
+          await adapter.sendMessage(chatId, renderAuthorizationStatus('switch-new')).catch(() => {});
 
-        deps.clearPendingAuthorizationForChat(cacheKey);
-        const nextSessionId = await createNewSession();
-        if (!nextSessionId) throw new Error('Failed to init Session');
-        await adapter.sendMessage(chatId, renderAuthorizationStatus('switch-new')).catch(() => {});
-
-        if (decision === 'start_new_session') {
-          return;
+          if (decision === 'start_new_session') {
+            return;
+          }
         }
       }
 
@@ -356,6 +406,7 @@ export const createIncomingHandlerWithDeps = (
           chatMaxFileSizeMb: deps.chatMaxFileSizeMb,
           chatMaxFileRetry: deps.chatMaxFileRetry,
           clearPendingQuestionForChat: deps.clearPendingQuestionForChat,
+          clearPendingAuthorizationForChat: deps.clearPendingAuthorizationForChat,
           markQuestionCallHandled: deps.markQuestionCallHandled,
           clearAllPendingQuestions: deps.clearAllPendingQuestions,
           ensureSession,

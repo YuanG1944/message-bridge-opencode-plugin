@@ -125,7 +125,9 @@ export async function startGlobalEventListener(api: OpencodeClient, mux: Adapter
     chatMaxFileSizeMb,
     chatMaxFileRetry,
     chatPendingQuestion,
+    chatPendingAuthorization,
     pendingQuestionTimers,
+    pendingAuthorizationTimers,
     isQuestionCallHandled,
     markQuestionCallHandled,
   });
@@ -149,7 +151,9 @@ export function stopGlobalEventListener() {
     chatMaxFileSizeMb,
     chatMaxFileRetry,
     chatPendingQuestion,
+    chatPendingAuthorization,
     pendingQuestionTimers,
+    pendingAuthorizationTimers,
     isQuestionCallHandled,
     markQuestionCallHandled,
   });

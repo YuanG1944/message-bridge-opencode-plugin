@@ -228,6 +228,7 @@ export type CommandContext = {
   chatMaxFileSizeMb: Map<string, number>;
   chatMaxFileRetry: Map<string, number>;
   clearPendingQuestionForChat: (cacheKey: string) => void;
+  clearPendingAuthorizationForChat: (cacheKey: string) => void;
   markQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => void;
   clearAllPendingQuestions: () => void;
   ensureSession: () => Promise<string>;
@@ -260,6 +261,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatMaxFileSizeMb,
     chatMaxFileRetry,
     clearPendingQuestionForChat,
+    clearPendingAuthorizationForChat,
     clearAllPendingQuestions,
     ensureSession,
     createNewSession,
@@ -609,6 +611,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatAgent.delete(cacheKey);
     chatModel.delete(cacheKey);
     clearPendingQuestionForChat(cacheKey);
+    clearPendingAuthorizationForChat(cacheKey);
     await sendCommandMessage(`✅ 已切换到会话: ${targetId}`);
     return true;
   }
@@ -683,6 +686,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
 
   if (normalizedCommand === 'new') {
     clearPendingQuestionForChat(cacheKey);
+    clearPendingAuthorizationForChat(cacheKey);
     const sessionId = await createNewSession();
     if (sessionId) {
       await sendCommandMessage(`✅ 已切换到新会话: ${sessionId}`);
@@ -704,6 +708,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatMaxFileSizeMb.clear();
     chatMaxFileRetry.clear();
     clearAllPendingQuestions();
+    clearPendingAuthorizationForChat(cacheKey);
 
     if (globalState.__bridge_progress_msg_ids) {
       globalState.__bridge_progress_msg_ids.clear();

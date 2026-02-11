@@ -1,6 +1,8 @@
 import type {
   EventCommandExecuted,
   EventMessagePartUpdated,
+  EventPermissionReplied,
+  EventPermissionUpdated,
   EventMessageUpdated,
   EventSessionError,
   EventSessionIdle,
@@ -41,6 +43,8 @@ import {
 } from './question.proxy';
 import type { PendingQuestionState, NormalizedQuestionPayload } from './question.proxy';
 import { extractErrorMessage } from './api.response';
+import type { PendingAuthorizationState } from './authorization.proxy';
+import { AUTH_TIMEOUT_MS, renderAuthorizationPrompt } from './authorization.proxy';
 
 type SessionContext = { chatId: string; senderId: string };
 type SelectedModel = { providerID: string; modelID: string; name?: string };
@@ -68,7 +72,9 @@ export type EventFlowDeps = {
   chatMaxFileSizeMb: Map<string, number>;
   chatMaxFileRetry: Map<string, number>;
   chatPendingQuestion: Map<string, PendingQuestionState>;
+  chatPendingAuthorization: Map<string, PendingAuthorizationState>;
   pendingQuestionTimers: Map<string, NodeJS.Timeout>;
+  pendingAuthorizationTimers: Map<string, NodeJS.Timeout>;
   isQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => boolean;
   markQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => void;
 };
@@ -88,6 +94,23 @@ function clearAllPendingQuestions(deps: EventFlowDeps) {
   }
   deps.pendingQuestionTimers.clear();
   deps.chatPendingQuestion.clear();
+}
+
+function clearPendingAuthorizationForChat(deps: EventFlowDeps, cacheKey: string) {
+  const timer = deps.pendingAuthorizationTimers.get(cacheKey);
+  if (timer) {
+    clearTimeout(timer);
+    deps.pendingAuthorizationTimers.delete(cacheKey);
+  }
+  deps.chatPendingAuthorization.delete(cacheKey);
+}
+
+function clearAllPendingAuthorizations(deps: EventFlowDeps) {
+  for (const timer of deps.pendingAuthorizationTimers.values()) {
+    clearTimeout(timer);
+  }
+  deps.pendingAuthorizationTimers.clear();
+  deps.chatPendingAuthorization.clear();
 }
 
 function getCacheKeyBySession(
@@ -638,6 +661,74 @@ async function handleSessionIdleEvent(
   await flushMessage(adapter, ctx.chatId, mid, deps.msgBuffers, true);
 }
 
+async function handlePermissionUpdatedEvent(
+  event: EventPermissionUpdated,
+  mux: AdapterMux,
+  deps: EventFlowDeps,
+) {
+  const permission = event.properties;
+  const sessionId = permission.sessionID;
+  if (!sessionId || !permission.id) return;
+  bridgeLogger.info(
+    `[BridgePermission] updated sid=${sessionId} permissionID=${permission.id} type=${permission.type || '-'} callID=${permission.callID || '-'} title=${(permission.title || '').slice(0, 160)} pattern=${Array.isArray(permission.pattern) ? permission.pattern.join('|') : (permission.pattern || '-')}`,
+  );
+
+  const route = getCacheKeyBySession(sessionId, deps);
+  if (!route) {
+    warnRouteMissOnce('permission.updated', sessionId);
+    return;
+  }
+  const { cacheKey, adapterKey, chatId } = route;
+  const adapter = mux.get(adapterKey);
+  if (!adapter) return;
+  const ctx = deps.sessionToCtx.get(sessionId);
+  if (!ctx) return;
+
+  clearPendingAuthorizationForChat(deps, cacheKey);
+  const pending: PendingAuthorizationState = {
+    mode: 'permission_request',
+    key: cacheKey,
+    adapterKey,
+    chatId,
+    senderId: ctx.senderId,
+    sessionId,
+    permissionID: permission.id,
+    permissionType: permission.type,
+    permissionTitle: permission.title,
+    permissionPattern: permission.pattern,
+    blockedReason: permission.title || permission.type || '权限请求',
+    source: 'bridge.incoming',
+    createdAt: Date.now(),
+    dueAt: Date.now() + AUTH_TIMEOUT_MS,
+  };
+  deps.chatPendingAuthorization.set(cacheKey, pending);
+
+  const timer = setTimeout(async () => {
+    const current = deps.chatPendingAuthorization.get(cacheKey);
+    if (!current || current.permissionID !== permission.id) return;
+    clearPendingAuthorizationForChat(deps, cacheKey);
+    await adapter.sendMessage(chatId, '## Status\n⏰ 权限请求已超时未处理。').catch(() => {});
+  }, AUTH_TIMEOUT_MS);
+  deps.pendingAuthorizationTimers.set(cacheKey, timer);
+
+  await adapter.sendMessage(chatId, renderAuthorizationPrompt(pending)).catch(() => {});
+}
+
+function handlePermissionRepliedEvent(event: EventPermissionReplied, deps: EventFlowDeps) {
+  const sessionId = event.properties.sessionID;
+  if (!sessionId) return;
+  bridgeLogger.info(
+    `[BridgePermission] replied sid=${sessionId} permissionID=${event.properties.permissionID} response=${event.properties.response || '-'}`,
+  );
+  const route = getCacheKeyBySession(sessionId, deps);
+  if (!route) return;
+  const { cacheKey } = route;
+  const pending = deps.chatPendingAuthorization.get(cacheKey);
+  if (!pending || pending.mode !== 'permission_request') return;
+  if (!pending.permissionID || pending.permissionID !== event.properties.permissionID) return;
+  clearPendingAuthorizationForChat(deps, cacheKey);
+}
+
 function handleCommandExecutedEvent(event: EventCommandExecuted, deps: EventFlowDeps) {
   const mid = event.properties.messageID;
   if (!mid) return;
@@ -697,6 +788,16 @@ export async function startGlobalEventListenerWithDeps(
           continue;
         }
 
+        if (e.type === 'permission.updated') {
+          await handlePermissionUpdatedEvent(event as EventPermissionUpdated, mux, deps);
+          continue;
+        }
+
+        if (e.type === 'permission.replied') {
+          handlePermissionRepliedEvent(event as EventPermissionReplied, deps);
+          continue;
+        }
+
         if (e.type === 'command.executed') {
           handleCommandExecutedEvent(event as EventCommandExecuted, deps);
           continue;
@@ -738,4 +839,5 @@ export function stopGlobalEventListenerWithDeps(deps: EventFlowDeps) {
   deps.chatMaxFileRetry.clear();
   
   clearAllPendingQuestions(deps);
+  clearAllPendingAuthorizations(deps);
 }
