@@ -3,8 +3,9 @@
 export const AGENT_LARK = 'lark-bridge';
 export const AGENT_IMESSAGE = 'imessage-bridge';
 export const AGENT_TELEGRAM = 'telegram-bridge';
+export const AGENT_QQ = 'qq-bridge';
 
-export const BRIDGE_AGENT_IDS = [AGENT_LARK, AGENT_IMESSAGE, AGENT_TELEGRAM] as const;
+export const BRIDGE_AGENT_IDS = [AGENT_LARK, AGENT_IMESSAGE, AGENT_TELEGRAM, AGENT_QQ] as const;
 
 export const LOADING_EMOJI = 'Typing';
 
