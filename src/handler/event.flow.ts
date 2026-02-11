@@ -49,6 +49,7 @@ type EventMessageBuffer = MessageBuffer & { __executionCarried?: boolean };
 const QUESTION_DEBUG_MAX_LEN = 4000;
 const ROUTE_MISS_WARN_INTERVAL_MS = 30_000;
 const lastRouteMissWarnAt = new Map<string, number>();
+const forwardedSchedulerUserParts = new Set<string>();
 
 export type EventFlowDeps = {
   listenerState: ListenerState;
@@ -110,6 +111,51 @@ function readStringField(obj: Record<string, unknown>, ...keys: string[]): strin
     }
   }
   return undefined;
+}
+
+function summarizeObservedEvent(event: unknown): Record<string, unknown> {
+  const e = event as { type?: string; properties?: unknown };
+  const props = (e?.properties ?? {}) as Record<string, unknown>;
+  const info =
+    props.info && typeof props.info === 'object'
+      ? (props.info as Record<string, unknown>)
+      : undefined;
+  const part =
+    props.part && typeof props.part === 'object'
+      ? (props.part as Record<string, unknown>)
+      : undefined;
+
+  return {
+    type: typeof e?.type === 'string' ? e.type : 'unknown',
+    session_id:
+      readStringField(props, 'sessionID') ??
+      readStringField(info ?? {}, 'sessionID') ??
+      readStringField(part ?? {}, 'sessionID'),
+    message_id: readStringField(info ?? {}, 'id') ?? readStringField(part ?? {}, 'messageID'),
+    role: readStringField(info ?? {}, 'role'),
+    part_type: readStringField(part ?? {}, 'type'),
+    part_id: readStringField(part ?? {}, 'id'),
+    has_delta: typeof props.delta === 'string' && props.delta.length > 0,
+    has_part_metadata:
+      !!part &&
+      typeof (part as { metadata?: unknown }).metadata === 'object' &&
+      (part as { metadata?: unknown }).metadata !== null,
+  };
+}
+
+function isSchedulerCallbackMetadata(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') {
+    return false;
+  }
+  const obj = metadata as Record<string, unknown>;
+  const source = readStringField(obj, 'source');
+  if (source === 'scheduler.callback') {
+    return true;
+  }
+  if (obj.bridge === true && typeof obj.task_id === 'string') {
+    return true;
+  }
+  return typeof obj.task_id === 'string' && typeof obj.run_id === 'string';
 }
 
 function warnRouteMissOnce(eventType: string, sessionId: string, messageId?: string): void {
@@ -384,7 +430,6 @@ async function handleMessagePartUpdatedEvent(
   const sessionId = part.sessionID;
   const messageId = part.messageID;
   if (!sessionId || !messageId) return;
-  if (deps.msgRole.get(messageId) === 'user') return;
 
   const partMeta = (part as { metadata?: unknown }).metadata;
   if (partMeta) {
@@ -397,6 +442,28 @@ async function handleMessagePartUpdatedEvent(
     return;
   }
   const { ctx, adapter } = target;
+
+  // Scheduler callback messages are often user-role text parts.
+  // Forward them as plain bridge output when we can identify callback metadata.
+  if (
+    deps.msgRole.get(messageId) === 'user' &&
+    part.type === 'text' &&
+    typeof part.text === 'string' &&
+    isSchedulerCallbackMetadata(partMeta)
+  ) {
+    const dedupeKey = `${sessionId}:${messageId}:${part.id}`;
+    if (forwardedSchedulerUserParts.has(dedupeKey)) {
+      return;
+    }
+    forwardedSchedulerUserParts.add(dedupeKey);
+    await adapter.sendMessage(ctx.chatId, part.text).catch(() => {});
+    bridgeLogger.info(
+      `[BridgeFlow] scheduler-user-part-forwarded sid=${sessionId} mid=${messageId} chat=${ctx.chatId}`,
+    );
+    return;
+  }
+
+  if (deps.msgRole.get(messageId) === 'user') return;
   const adapterKey = deps.sessionToAdapterKey.get(sessionId);
   const cacheKey = adapterKey ? `${adapterKey}:${ctx.chatId}` : '';
 
@@ -605,6 +672,7 @@ export async function startGlobalEventListenerWithDeps(
       for await (const event of events.stream) {
         const e = event as EventWithType;
         if (deps.listenerState.shouldStopListener) break;
+        bridgeLogger.info('[BridgeFlow] event.observed', summarizeObservedEvent(event));
 
         if (e.type === 'message.updated') {
           await handleMessageUpdatedEvent(event as EventMessageUpdated, mux, deps);
