@@ -696,6 +696,19 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     return true;
   }
 
+  if (normalizedCommand === 'clear') {
+    const sessionId = await ensureSession();
+    await api.session.command({
+      path: { id: sessionId },
+      body: { command: 'clear', arguments: '' },
+    });
+    clearPendingQuestionForChat(cacheKey);
+    clearPendingAuthorizationForChat(cacheKey);
+    chatAwaitingSaveFile.delete(cacheKey);
+    await sendCommandMessage(`✅ 已清空当前会话上下文: ${sessionId}`);
+    return true;
+  }
+
   if (normalizedCommand === 'restart') {
     sessionCache.clear();
     sessionToAdapterKey.clear();

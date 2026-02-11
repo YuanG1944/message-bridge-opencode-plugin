@@ -60,7 +60,6 @@ function normalizeSlashCommand(command?: string): string | undefined {
     summarize: 'compact',
     model: 'models',
     restart: 'restart',
-    clear: 'new',
     new: 'new',
     reset: 'restart',
   };
