@@ -51,6 +51,19 @@ export interface TelegramConfig {
   auto_send_local_files_allow_absolute?: boolean;
 }
 
+export interface QQConfig {
+  app_id: string;
+  secret: string;
+  mode: 'ws' | 'webhook';
+  callback_url?: string;
+  webhook_listen_port?: number;
+  encrypt_key?: string;
+  file_store_dir?: string;
+  auto_send_local_files?: boolean;
+  auto_send_local_files_max_mb?: number;
+  auto_send_local_files_allow_absolute?: boolean;
+}
+
 export type OutgoingFileConfig = {
   enabled: boolean;
   maxMb: number;

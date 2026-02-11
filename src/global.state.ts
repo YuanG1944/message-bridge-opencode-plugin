@@ -21,4 +21,9 @@ type FeishuRuntimeState = {
   __feishu_ws_client_instance?: unknown;
 };
 
-export type BridgeGlobalState = typeof globalThis & BridgeRuntimeState & FeishuRuntimeState;
+type QQRuntimeState = {
+  __qq_processed_ids?: Set<string>;
+  __qq_ws_client_instance?: unknown;
+};
+
+export type BridgeGlobalState = typeof globalThis & BridgeRuntimeState & FeishuRuntimeState & QQRuntimeState;

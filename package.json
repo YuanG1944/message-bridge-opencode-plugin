@@ -28,7 +28,8 @@
   "license": "MIT",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.26.0",
-    "axios": "^1.13.4"
+    "axios": "^1.13.4",
+    "tweetnacl": "^1.0.3"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "^1.1.48",
