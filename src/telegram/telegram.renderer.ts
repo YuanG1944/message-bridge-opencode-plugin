@@ -27,7 +27,7 @@ function normalizeSectionTitle(rawTitle: string): string {
 
 function matchSectionKey(
   rawTitle: string,
-): 'thinking' | 'error' | 'command' | 'tools' | 'files' | 'status' | 'answer' | null {
+): 'thinking' | 'error' | 'command' | 'tools' | 'files' | 'status' | 'authorization' | 'answer' | null {
   const t = normalizeSectionTitle(rawTitle);
   if (!t) return null;
 
@@ -38,6 +38,7 @@ function matchSectionKey(
     return 'tools';
   if (['file', 'files', '文件'].includes(t)) return 'files';
   if (['status', '状态'].includes(t)) return 'status';
+  if (['authorization', 'auth', '权限', '授权'].includes(t)) return 'authorization';
   if (['answer', '回答'].includes(t)) return 'answer';
 
   return null;
@@ -48,6 +49,7 @@ function parseSections(md: string): Record<string, string> {
     command: '',
     error: '',
     thinking: '',
+    authorization: '',
     answer: '',
     tools: '',
     files: '',
@@ -84,6 +86,7 @@ function parseSections(md: string): Record<string, string> {
     !sectionMap.command &&
     !sectionMap.error &&
     !sectionMap.thinking &&
+    !sectionMap.authorization &&
     !sectionMap.status
   ) {
     sectionMap.answer = cleanMd;
@@ -141,6 +144,7 @@ function buildTelegramMarkdown(markdown: string): string {
   };
 
   pushSection('Command', sections.command);
+  pushSection('Authorization', sections.authorization);
   if (trimSafe(sections.thinking)) {
     out.push('## Thinking');
     out.push('💭 Thinking (collapsed)');
@@ -187,6 +191,7 @@ export function renderTelegram(markdown: string): string {
 
   text = escapeHtml(text);
   text = text.replace(/^##\s+Command$/gm, '<b>🧭 Command</b>\n');
+  text = text.replace(/^##\s+Authorization$/gm, '<b>🔐 Authorization</b>\n');
   text = text.replace(/^##\s+Thinking$/gm, '<b>🤔 Thinking</b>\n');
   text = text.replace(/^##\s+Tools(?:\s*\/\s*Steps)?$/gim, '<b>🧰 Tools / Steps</b>\n');
   text = text.replace(/^##\s+Files$/gm, '<b>🖼️ Files</b>\n');

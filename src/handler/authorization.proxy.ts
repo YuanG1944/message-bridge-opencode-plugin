@@ -98,7 +98,7 @@ export function parseAuthorizationReply(
 
 export function renderAuthorizationPrompt(state: PendingAuthorizationState): string {
   const lines: string[] = [];
-  lines.push('## Question');
+  lines.push('## Authorization');
   if (state.mode === 'permission_request') {
     lines.push('OpenCode 请求权限，请选择：');
     if (state.permissionTitle) lines.push(`权限：${state.permissionTitle}`);

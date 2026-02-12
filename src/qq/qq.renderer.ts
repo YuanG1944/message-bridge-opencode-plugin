@@ -16,6 +16,7 @@ function parseSections(md: string) {
     command: '',
     error: '',
     thinking: '',
+    authorization: '',
     answer: '',
     tools: '',
     files: '',
@@ -66,6 +67,7 @@ function parseSections(md: string) {
     !sectionMap.command &&
     !sectionMap.error &&
     !sectionMap.thinking &&
+    !sectionMap.authorization &&
     !sectionMap.status
   ) {
     sectionMap.answer = cleanMd;
@@ -84,7 +86,7 @@ function normalizeSectionTitle(rawTitle: string): string {
 
 function matchSectionKey(
   rawTitle: string,
-): 'thinking' | 'error' | 'command' | 'tools' | 'files' | 'status' | 'answer' | null {
+): 'thinking' | 'error' | 'command' | 'tools' | 'files' | 'status' | 'authorization' | 'answer' | null {
   const t = normalizeSectionTitle(rawTitle);
   if (!t) return null;
 
@@ -95,6 +97,7 @@ function matchSectionKey(
     return 'tools';
   if (['file', 'files', '文件'].includes(t)) return 'files';
   if (['status', '状态'].includes(t)) return 'status';
+  if (['authorization', 'auth', '权限', '授权'].includes(t)) return 'authorization';
   if (['answer', '回答'].includes(t)) return 'answer';
 
   return null;
@@ -165,7 +168,7 @@ function removeMarkdownFormatting(text: string): string {
 }
 
 export function renderQQMessageFromHandlerMarkdown(handlerMarkdown: string): string {
-  const { command, error, thinking, answer, tools, files } = parseSections(handlerMarkdown);
+  const { command, error, thinking, authorization, answer, tools, files } = parseSections(handlerMarkdown);
 
   // 优先显示 answer，如果没有则显示其他内容
   // 去掉所有markdown格式，只保留纯文本
@@ -189,6 +192,13 @@ export function renderQQMessageFromHandlerMarkdown(handlerMarkdown: string): str
 
   // 如果没有 answer，显示其他有用信息（但不包括 status）
   if (!trimSafe(answer)) {
+    if (trimSafe(authorization)) {
+      const cleanAuthorization = removeMarkdownFormatting(sanitizeTemplateMarkers(authorization));
+      if (cleanAuthorization) {
+        parts.push(cleanAuthorization);
+      }
+    }
+
     if (trimSafe(thinking)) {
       const cleanThinking = removeMarkdownFormatting(sanitizeTemplateMarkers(thinking));
       if (cleanThinking) {

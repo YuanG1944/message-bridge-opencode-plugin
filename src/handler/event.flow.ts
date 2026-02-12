@@ -52,9 +52,11 @@ type EventWithType = { type: string; properties?: unknown };
 type EventMessageBuffer = MessageBuffer & { __executionCarried?: boolean };
 const ROUTE_MISS_WARN_INTERVAL_MS = 30_000;
 const PERMISSION_DEDUPE_WINDOW_MS = 3_000;
+const PERMISSION_PROMPT_DEDUPE_WINDOW_MS = 30_000;
 const lastRouteMissWarnAt = new Map<string, number>();
 const forwardedSchedulerUserParts = new Set<string>();
 const recentPermissionEventAt = new Map<string, number>();
+const recentPermissionPromptBySession = new Map<string, { at: number; signature: string }>();
 
 function unwrapObservedEvent(event: unknown): EventWithType | null {
   const direct = event as { type?: unknown; properties?: unknown; payload?: unknown } | null;
@@ -80,6 +82,18 @@ function shouldSkipDuplicatePermissionEvent(scope: 'request' | 'reply', sid: str
   }
 
   return typeof last === 'number' && now - last < PERMISSION_DEDUPE_WINDOW_MS;
+}
+
+function permissionSignature(input: {
+  type?: string;
+  title?: string;
+  pattern?: string | Array<string>;
+  callID?: string;
+}): string {
+  const patternText = Array.isArray(input.pattern)
+    ? input.pattern.join('|')
+    : (input.pattern || '');
+  return [input.type || '', input.title || '', patternText, input.callID || ''].join('::');
 }
 
 export type EventFlowDeps = {
@@ -722,6 +736,58 @@ async function handlePermissionUpdatedEvent(
   if (!adapter) return;
   const ctx = deps.sessionToCtx.get(sessionId);
   if (!ctx) return;
+
+  const existingPending = deps.chatPendingAuthorization.get(cacheKey);
+  if (
+    existingPending &&
+    existingPending.mode === 'permission_request' &&
+    existingPending.sessionId === sessionId
+  ) {
+    existingPending.permissionID = permissionID;
+    existingPending.permissionType = permissionType;
+    existingPending.permissionTitle = permissionTitle;
+    existingPending.permissionPattern = permissionPattern as string | Array<string> | undefined;
+    existingPending.blockedReason = permissionTitle;
+    deps.chatPendingAuthorization.set(cacheKey, existingPending);
+    bridgeLogger.debug(
+      `[BridgePermission] update pending without re-prompt sid=${sessionId} permissionID=${permissionID}`,
+    );
+    return;
+  }
+
+  const sig = permissionSignature({
+    type: permissionType,
+    title: permissionTitle,
+    pattern: permissionPattern as string | Array<string> | undefined,
+    callID,
+  });
+  const prevPrompt = recentPermissionPromptBySession.get(cacheKey);
+  const now = Date.now();
+  if (
+    prevPrompt &&
+    prevPrompt.signature === sig &&
+    now - prevPrompt.at < PERMISSION_PROMPT_DEDUPE_WINDOW_MS
+  ) {
+    const pending = deps.chatPendingAuthorization.get(cacheKey);
+    if (pending && pending.mode === 'permission_request') {
+      pending.permissionID = permissionID;
+      pending.permissionType = permissionType;
+      pending.permissionTitle = permissionTitle;
+      pending.permissionPattern = permissionPattern as string | Array<string> | undefined;
+      deps.chatPendingAuthorization.set(cacheKey, pending);
+    }
+    bridgeLogger.debug(
+      `[BridgePermission] dedupe skip prompt sid=${sessionId} permissionID=${permissionID} sig=${sig}`,
+    );
+    return;
+  }
+  recentPermissionPromptBySession.set(cacheKey, { at: now, signature: sig });
+  if (recentPermissionPromptBySession.size > 2000) {
+    const cutoff = now - PERMISSION_PROMPT_DEDUPE_WINDOW_MS * 4;
+    for (const [k, v] of recentPermissionPromptBySession.entries()) {
+      if (v.at < cutoff) recentPermissionPromptBySession.delete(k);
+    }
+  }
 
   clearPendingAuthorizationForChat(deps, cacheKey);
   const pending: PendingAuthorizationState = {

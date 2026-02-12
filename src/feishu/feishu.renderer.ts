@@ -118,7 +118,7 @@ function normalizeSectionTitle(rawTitle: string): string {
 
 function matchSectionKey(
   rawTitle: string,
-): 'thinking' | 'error' | 'command' | 'tools' | 'files' | 'status' | 'answer' | null {
+): 'thinking' | 'error' | 'command' | 'tools' | 'files' | 'status' | 'authorization' | 'answer' | null {
   const t = normalizeSectionTitle(rawTitle);
   if (!t) return null;
 
@@ -129,6 +129,7 @@ function matchSectionKey(
     return 'tools';
   if (['file', 'files', '文件'].includes(t)) return 'files';
   if (['status', '状态'].includes(t)) return 'status';
+  if (['authorization', 'auth', '权限', '授权'].includes(t)) return 'authorization';
   if (['answer', '回答'].includes(t)) return 'answer';
 
   return null;
@@ -196,6 +197,7 @@ function parseSections(md: string) {
     command: '',
     error: '',
     thinking: '',
+    authorization: '',
     answer: '',
     tools: '',
     files: '',
@@ -246,6 +248,7 @@ function parseSections(md: string) {
     !sectionMap.command &&
     !sectionMap.error &&
     !sectionMap.thinking &&
+    !sectionMap.authorization &&
     !sectionMap.status
   ) {
     sectionMap.answer = cleanMd;
@@ -377,7 +380,7 @@ function renderModelsCommand(command: string): FeishuCardElement[] | null {
 }
 
 export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): string {
-  const { command, error, thinking, answer, tools, files, status } = parseSections(handlerMarkdown);
+  const { command, error, thinking, authorization, answer, tools, files, status } = parseSections(handlerMarkdown);
 
   const elements: FeishuCardElement[] = [];
 
@@ -385,7 +388,11 @@ export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): st
   let headerColor = 'blue';
 
   const hasOnlyStatus =
-    !trimSafe(command) && !trimSafe(answer) && !trimSafe(tools) && !trimSafe(thinking);
+    !trimSafe(command) &&
+    !trimSafe(authorization) &&
+    !trimSafe(answer) &&
+    !trimSafe(tools) &&
+    !trimSafe(thinking);
 
   if (trimSafe(error)) {
     headerTitle = '🚨 Error';
@@ -397,6 +404,9 @@ export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): st
   } else if (trimSafe(command)) {
     headerTitle = '🧭 Command';
     headerColor = 'green';
+  } else if (trimSafe(authorization)) {
+    headerTitle = '🔐 Authorization';
+    headerColor = 'orange';
   } else if (trimSafe(answer)) {
     headerTitle = '📝 Answer';
     headerColor = 'blue';
@@ -430,6 +440,7 @@ export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): st
 
   const finalError = trimSafe(error);
   const finalCommand = trimSafe(command);
+  const finalAuthorization = trimSafe(authorization);
   const finalAnswer = trimSafe(answer);
 
   if (finalError) {
@@ -458,6 +469,17 @@ export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): st
         },
       });
     }
+  }
+
+  if (finalAuthorization) {
+    if (elements.length > 0) elements.push(hr());
+    elements.push({
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: finalAuthorization,
+      },
+    });
   }
 
   if (finalAnswer) {
