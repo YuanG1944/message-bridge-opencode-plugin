@@ -54,6 +54,23 @@ const ROUTE_MISS_WARN_INTERVAL_MS = 30_000;
 const lastRouteMissWarnAt = new Map<string, number>();
 const forwardedSchedulerUserParts = new Set<string>();
 
+function unwrapObservedEvent(event: unknown): EventWithType | null {
+  if (event && typeof event === 'object') {
+    const direct = event as { type?: unknown; properties?: unknown };
+    if (typeof direct.type === 'string') {
+      return direct as EventWithType;
+    }
+    const payload = (event as { payload?: unknown }).payload;
+    if (payload && typeof payload === 'object') {
+      const nested = payload as { type?: unknown; properties?: unknown };
+      if (typeof nested.type === 'string') {
+        return nested as EventWithType;
+      }
+    }
+  }
+  return null;
+}
+
 export type EventFlowDeps = {
   listenerState: ListenerState;
   sessionToCtx: Map<string, SessionContext>;
@@ -744,6 +761,7 @@ export async function startGlobalEventListenerWithDeps(
   bridgeLogger.info('[Listener] starting global event subscription (MUX)');
 
   let retryCount = 0;
+  let globalRetryCount = 0;
 
   const connect = async () => {
     try {
@@ -752,9 +770,13 @@ export async function startGlobalEventListenerWithDeps(
       retryCount = 0;
 
       for await (const event of events.stream) {
-        const e = event as EventWithType;
+        const e = unwrapObservedEvent(event);
         if (deps.listenerState.shouldStopListener) break;
-        bridgeLogger.info('[BridgeFlow] event.observed', summarizeObservedEvent(event));
+        if (!e) {
+          bridgeLogger.debug('[BridgeFlow] event.observed.unparsed', event);
+          continue;
+        }
+        bridgeLogger.info('[BridgeFlow] event.observed', summarizeObservedEvent(e));
 
         if (e.type === 'message.updated') {
           await handleMessageUpdatedEvent(event as EventMessageUpdated, mux, deps);
@@ -810,7 +832,37 @@ export async function startGlobalEventListenerWithDeps(
     }
   };
 
+  const connectGlobalPermissions = async () => {
+    if (!api.global?.event) return;
+    try {
+      const events = await api.global.event();
+      bridgeLogger.info('[Listener] connected to OpenCode global event stream');
+      globalRetryCount = 0;
+
+      for await (const event of events.stream) {
+        const e = unwrapObservedEvent(event);
+        if (deps.listenerState.shouldStopListener) break;
+        if (!e) continue;
+        if (e.type === 'permission.updated') {
+          await handlePermissionUpdatedEvent(e as EventPermissionUpdated, mux, deps);
+          continue;
+        }
+        if (e.type === 'permission.replied') {
+          handlePermissionRepliedEvent(e as EventPermissionReplied, deps);
+          continue;
+        }
+      }
+    } catch (e) {
+      if (deps.listenerState.shouldStopListener) return;
+      bridgeLogger.error('[Listener] global stream disconnected', e);
+      const delay = Math.min(5000 * (globalRetryCount + 1), 60000);
+      globalRetryCount++;
+      setTimeout(connectGlobalPermissions, delay);
+    }
+  };
+
   connect();
+  connectGlobalPermissions();
 }
 
 export function stopGlobalEventListenerWithDeps(deps: EventFlowDeps) {
