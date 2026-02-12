@@ -193,6 +193,10 @@ npm install message-bridge-opencode-plugin
 
   [快速开始 🔗 ](https://github.com/YuanG1944/message-bridge-opencode-plugin/tree/main/config-guide/telegram/GUIDE.zh.md)
 
+- QQ 配置
+
+  [快速开始 🔗 ](https://github.com/YuanG1944/message-bridge-opencode-plugin/tree/main/config-guide/qq/GUIDE.zh.md)
+
 可选文件桥配置（`agent.message-bridge.options`）：
 
 * `auto_send_local_files`（`"true"` / `"false"`，默认 `false`）
@@ -225,7 +229,7 @@ bun install
 ## 🛣 开发路线图
 
 * [x] 飞书 / Lark（已完成，稳定）
-* [ ] iMessage（优先实现）
+* [x] QQ
 * [x] Telegram（Bot API / 轮询 + Webhook）
 * [ ] Slack
 * [ ] Discord

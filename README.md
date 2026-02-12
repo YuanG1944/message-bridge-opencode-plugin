@@ -206,6 +206,10 @@ npm install message-bridge-opencode-plugin
 
 [Quick Start 🔗](https://github.com/YuanG1944/message-bridge-opencode-plugin/tree/main/config-guide/telegram/GUIDE.md)
 
+### QQ 
+
+[Quick Start 🔗](https://github.com/YuanG1944/message-bridge-opencode-plugin/blob/main/config-guide/qq/GUIDE.md)
+
 ### Optional file-bridge options
 
 You can configure local file return behavior in `agent.message-bridge.options`:

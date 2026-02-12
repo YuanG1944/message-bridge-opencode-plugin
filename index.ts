@@ -2,7 +2,7 @@
 import type { Plugin } from '@opencode-ai/plugin';
 
 import { globalState, isEnabled, runtimeInstanceId } from './src/utils';
-import { AGENT_LARK, AGENT_IMESSAGE, AGENT_TELEGRAM } from './src/constants';
+import { AGENT_LARK, AGENT_IMESSAGE, AGENT_TELEGRAM, AGENT_QQ } from './src/constants';
 import { bridgeLogger, getBridgeLogFilePath } from './src/logger';
 
 import { AdapterMux } from './src/handler/mux';
@@ -12,9 +12,11 @@ import { setBridgeFileStoreDir } from './src/bridge/file.store';
 import { FeishuAdapter } from './src/feishu/feishu.adapter';
 import type { BridgeAdapter } from './src/types';
 import { TelegramAdapter } from './src/telegram/telegram.adapter';
+import { QQAdapter } from './src/qq/qq.adapter';
 
 import { parseFeishuConfig } from './index.feishu';
 import { parseTelegramConfig } from './index.telegram';
+import { parseQQConfig } from './index.qq';
 
 export const BridgePlugin: Plugin = async ctx => {
   const { client } = ctx;
@@ -56,6 +58,15 @@ export const BridgePlugin: Plugin = async ctx => {
         adaptersToStart.push({
           key: AGENT_TELEGRAM,
           create: () => new TelegramAdapter(telegramCfg),
+        });
+      }
+
+      if (isEnabled(cfg, AGENT_QQ)) {
+        const qqCfg = parseQQConfig(cfg);
+        if (qqCfg.file_store_dir) storeDirCandidates.push(qqCfg.file_store_dir);
+        adaptersToStart.push({
+          key: AGENT_QQ,
+          create: () => new QQAdapter(qqCfg),
         });
       }
 
