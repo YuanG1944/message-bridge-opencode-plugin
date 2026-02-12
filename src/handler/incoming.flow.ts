@@ -95,6 +95,11 @@ function isLikelyPermissionBlockedError(err: unknown): boolean {
     msg.includes('consent') ||
     msg.includes('authorize') ||
     msg.includes('confirm') ||
+    msg.includes('busy') ||
+    msg.includes('not idle') ||
+    msg.includes('already running') ||
+    msg.includes('in progress') ||
+    msg.includes('会话忙') ||
     msg.includes('需要权限') ||
     msg.includes('等待授权') ||
     msg.includes('等待确认')
@@ -298,6 +303,26 @@ export const createIncomingHandlerWithDeps = (
         }
       };
 
+      const replyPermissionRequest = async (
+        sessionId: string,
+        permissionID: string,
+        decision: 'allow_once' | 'allow_always' | 'reject_permission',
+      ): Promise<void> => {
+        const response: 'once' | 'always' | 'reject' =
+          decision === 'allow_once'
+            ? 'once'
+            : decision === 'allow_always'
+              ? 'always'
+              : 'reject';
+        await api.postSessionIdPermissionsPermissionId({
+          path: { id: sessionId, permissionID },
+          body: { response },
+        });
+        bridgeLogger.info(
+          `[BridgePermission] reply sent sid=${sessionId} permissionID=${permissionID} response=${response}`,
+        );
+      };
+
       const pendingAuthorization = deps.chatPendingAuthorization.get(cacheKey);
       if (pendingAuthorization && !slash) {
         let decision = parseAuthorizationReply(text || '');
@@ -325,19 +350,11 @@ export const createIncomingHandlerWithDeps = (
               await adapter.sendMessage(chatId, `${ERROR_HEADER}\n权限请求缺少 permissionID，已取消。`);
               return;
             }
-            const response =
-              decision === 'allow_once'
-                ? 'once'
-                : decision === 'allow_always'
-                  ? 'always'
-                  : 'reject';
-            await api.postSessionIdPermissionsPermissionId({
-              path: {
-                id: pendingAuthorization.sessionId,
-                permissionID: pendingAuthorization.permissionID,
-              },
-              body: { response },
-            });
+            await replyPermissionRequest(
+              pendingAuthorization.sessionId,
+              pendingAuthorization.permissionID,
+              decision,
+            );
             deps.clearPendingAuthorizationForChat(cacheKey);
             const statusMode =
               decision === 'allow_once'
@@ -348,12 +365,10 @@ export const createIncomingHandlerWithDeps = (
             await adapter.sendMessage(chatId, renderAuthorizationStatus(statusMode)).catch(() => {});
             return;
           }
-
           deps.clearPendingAuthorizationForChat(cacheKey);
-          const nextSessionId = await createNewSession();
-          if (!nextSessionId) throw new Error('Failed to init Session');
-          await adapter.sendMessage(chatId, renderAuthorizationStatus('switch-new')).catch(() => {});
-          if (decision === 'start_new_session') return;
+          bridgeLogger.info(
+            `[BridgePermission] non-option input -> handover to model adapter=${adapterKey} chat=${chatId}`,
+          );
         } else if (decision === 'resume_blocked') {
           try {
             await submitPrompt(
@@ -372,13 +387,15 @@ export const createIncomingHandlerWithDeps = (
           return;
         } else {
           deps.clearPendingAuthorizationForChat(cacheKey);
-          const nextSessionId = await createNewSession();
-          if (!nextSessionId) throw new Error('Failed to init Session');
-          await adapter.sendMessage(chatId, renderAuthorizationStatus('switch-new')).catch(() => {});
-
           if (decision === 'start_new_session') {
+            const nextSessionId = await createNewSession();
+            if (!nextSessionId) throw new Error('Failed to init Session');
+            await adapter.sendMessage(chatId, renderAuthorizationStatus('switch-new')).catch(() => {});
             return;
           }
+          bridgeLogger.info(
+            `[BridgePermission] blocked-session non-option -> handover to model adapter=${adapterKey} chat=${chatId}`,
+          );
         }
       }
 

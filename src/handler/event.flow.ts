@@ -36,7 +36,6 @@ import {
 } from './execution.flow';
 import {
   extractQuestionPayload,
-  isQuestionToolError,
   isQuestionToolPart,
   QUESTION_TIMEOUT_MS,
   renderQuestionPrompt,
@@ -51,7 +50,6 @@ type SelectedModel = { providerID: string; modelID: string; name?: string };
 type ListenerState = { isListenerStarted: boolean; shouldStopListener: boolean };
 type EventWithType = { type: string; properties?: unknown };
 type EventMessageBuffer = MessageBuffer & { __executionCarried?: boolean };
-const QUESTION_DEBUG_MAX_LEN = 4000;
 const ROUTE_MISS_WARN_INTERVAL_MS = 30_000;
 const lastRouteMissWarnAt = new Map<string, number>();
 const forwardedSchedulerUserParts = new Set<string>();
@@ -232,11 +230,6 @@ function hydrateSessionRouteFromMetadata(
     );
   }
   return true;
-}
-
-function clipDebugText(value: string, max = QUESTION_DEBUG_MAX_LEN): string {
-  if (value.length <= max) return value;
-  return `${value.slice(0, max)}...<truncated>`;
 }
 
 async function captureQuestionProxyIfNeeded(params: {

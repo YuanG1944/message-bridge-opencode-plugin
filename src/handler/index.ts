@@ -57,10 +57,6 @@ function isQuestionCallHandled(cacheKey: string, messageId: string, callID: stri
   return chatHandledQuestionCalls.get(cacheKey)?.has(token) === true;
 }
 
-function clearHandledQuestionCallsForChat(cacheKey: string) {
-  chatHandledQuestionCalls.delete(cacheKey);
-}
-
 function clearAllHandledQuestionCalls() {
   chatHandledQuestionCalls.clear();
 }

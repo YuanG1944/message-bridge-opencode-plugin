@@ -27,8 +27,12 @@ function normalizeToken(value: string): string {
     .replace(/[`'"“”‘’]/g, '');
 }
 
+function containsAny(token: string, terms: string[]): boolean {
+  return terms.some(term => token === term || token.includes(term));
+}
+
 export function parseAuthorizationReply(
-  value: string,
+  value: string
 ):
   | 'resume_blocked'
   | 'start_new_session'
@@ -40,34 +44,20 @@ export function parseAuthorizationReply(
   const token = normalizeToken(value);
   if (!token) return 'empty';
 
-  const allowOnce = new Set([
-    '1',
-    'once',
-    'allow once',
-    '允许一次',
-    '本次允许',
-    '单次允许',
-  ]);
-  if (allowOnce.has(token)) return 'allow_once';
+  const allowOnce = new Set(['1', 'once', 'allow once', '允许一次', '本次允许', '单次允许']);
+  if (allowOnce.has(token) || containsAny(token, ['允许一次', '本次允许', 'allow once', 'once']))
+    return 'allow_once';
 
-  const allowAlways = new Set([
-    '2',
-    'always',
-    'always allow',
-    '始终允许',
-    '总是允许',
-    '永久允许',
-  ]);
-  if (allowAlways.has(token)) return 'allow_always';
+  const allowAlways = new Set(['2', 'always', 'always allow', '始终允许', '总是允许', '永久允许']);
+  if (
+    allowAlways.has(token) ||
+    containsAny(token, ['始终允许', '总是允许', 'always allow', 'always'])
+  )
+    return 'allow_always';
 
-  const reject = new Set([
-    '3',
-    'reject',
-    'deny',
-    '拒绝',
-    '不允许',
-  ]);
-  if (reject.has(token)) return 'reject_permission';
+  const reject = new Set(['3', 'reject', 'deny', '拒绝', '不允许']);
+  if (reject.has(token) || containsAny(token, ['拒绝', 'deny', 'reject']))
+    return 'reject_permission';
 
   const resumeSet = new Set([
     'y',
@@ -84,7 +74,8 @@ export function parseAuthorizationReply(
     '好了',
     '完成',
   ]);
-  if (resumeSet.has(token)) return 'resume_blocked';
+  if (resumeSet.has(token) || containsAny(token, ['继续原会话', 'resume', 'continue', '已授权']))
+    return 'resume_blocked';
 
   const newSet = new Set([
     '2',
@@ -99,7 +90,8 @@ export function parseAuthorizationReply(
     '先聊别的',
     '换个话题',
   ]);
-  if (newSet.has(token)) return 'start_new_session';
+  if (newSet.has(token) || containsAny(token, ['新话题', '新会话', 'start new']))
+    return 'start_new_session';
 
   return 'unknown';
 }
@@ -151,7 +143,7 @@ export function renderAuthorizationStatus(
     | 'still-blocked'
     | 'permission-once'
     | 'permission-always'
-    | 'permission-reject',
+    | 'permission-reject'
 ): string {
   if (mode === 'permission-once') {
     return '## Status\n✅ 已授权：允许一次。继续处理中。';
