@@ -779,42 +779,42 @@ export async function startGlobalEventListenerWithDeps(
         bridgeLogger.info('[BridgeFlow] event.observed', summarizeObservedEvent(e));
 
         if (e.type === 'message.updated') {
-          await handleMessageUpdatedEvent(event as EventMessageUpdated, mux, deps);
+          await handleMessageUpdatedEvent(e as EventMessageUpdated, mux, deps);
           continue;
         }
 
         if (e.type === 'message.part.updated') {
-          const pe = event as EventMessagePartUpdated;
+          const pe = e as EventMessagePartUpdated;
           const p = pe.properties.part;
           bridgeLogger.debug(
             `[BridgeFlowDebug] part.updated sid=${p.sessionID} mid=${p.messageID} type=${p.type} deltaLen=${(pe.properties.delta || '').length}`,
           );
-          await handleMessagePartUpdatedEvent(event as EventMessagePartUpdated, api, mux, deps);
+          await handleMessagePartUpdatedEvent(e as EventMessagePartUpdated, api, mux, deps);
           continue;
         }
 
         if (e.type === 'session.error') {
-          await handleSessionErrorEvent(event as EventSessionError, mux, deps);
+          await handleSessionErrorEvent(e as EventSessionError, mux, deps);
           continue;
         }
 
         if (e.type === 'session.idle') {
-          await handleSessionIdleEvent(event as EventSessionIdle, mux, deps);
+          await handleSessionIdleEvent(e as EventSessionIdle, mux, deps);
           continue;
         }
 
         if (e.type === 'permission.updated') {
-          await handlePermissionUpdatedEvent(event as EventPermissionUpdated, mux, deps);
+          await handlePermissionUpdatedEvent(e as EventPermissionUpdated, mux, deps);
           continue;
         }
 
         if (e.type === 'permission.replied') {
-          handlePermissionRepliedEvent(event as EventPermissionReplied, deps);
+          handlePermissionRepliedEvent(e as EventPermissionReplied, deps);
           continue;
         }
 
         if (e.type === 'command.executed') {
-          handleCommandExecutedEvent(event as EventCommandExecuted, deps);
+          handleCommandExecutedEvent(e as EventCommandExecuted, deps);
           continue;
         }
       }
