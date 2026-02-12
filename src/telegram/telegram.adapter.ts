@@ -7,6 +7,7 @@ import type {
   TelegramConfig,
 } from '../types';
 import * as path from 'node:path';
+import { LRUCache } from 'lru-cache';
 import { TelegramClient } from './telegram.client';
 import { renderTelegram } from './telegram.renderer';
 import { bridgeLogger } from '../logger';
@@ -18,10 +19,19 @@ export class TelegramAdapter implements BridgeAdapter {
   private readonly client: TelegramClient;
   private readonly pendingTyping = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingReactionByChat = new Map<string, string[]>();
-  private readonly virtualToRealMessage = new Map<string, string>();
+  private readonly virtualToRealMessage = new LRUCache<string, string>({
+    max: 6000,
+    ttl: 6 * 60 * 60 * 1000,
+  });
   private readonly freezeStreamingEdits = new Set<string>();
-  private readonly lastRenderedByMsg = new Map<string, string>();
-  private readonly sentFilesByMsg = new Map<string, Set<string>>();
+  private readonly lastRenderedByMsg = new LRUCache<string, string>({
+    max: 6000,
+    ttl: 3 * 60 * 60 * 1000,
+  });
+  private readonly sentFilesByMsg = new LRUCache<string, Set<string>>({
+    max: 6000,
+    ttl: 6 * 60 * 60 * 1000,
+  });
   private readonly outgoingFileCfg: OutgoingFileConfig;
 
   constructor(config: TelegramConfig) {

@@ -9,6 +9,7 @@ import type {
   OpencodeClient,
 } from '@opencode-ai/sdk';
 import type { ToolPart } from '@opencode-ai/sdk';
+import { LRUCache } from 'lru-cache';
 import type { BridgeAdapter } from '../types';
 import type { AdapterMux } from './mux';
 import { bridgeLogger } from '../logger';
@@ -53,10 +54,18 @@ type EventMessageBuffer = MessageBuffer & { __executionCarried?: boolean };
 const ROUTE_MISS_WARN_INTERVAL_MS = 30_000;
 const PERMISSION_DEDUPE_WINDOW_MS = 3_000;
 const PERMISSION_PROMPT_DEDUPE_WINDOW_MS = 30_000;
-const lastRouteMissWarnAt = new Map<string, number>();
-const forwardedSchedulerUserParts = new Set<string>();
-const recentPermissionEventAt = new Map<string, number>();
-const recentPermissionPromptBySession = new Map<string, { at: number; signature: string }>();
+const MAX_ACTIVE_MESSAGE_BUFFERS = 600;
+const BUFFER_SWEEP_BATCH_SIZE = 120;
+const lastRouteMissWarnAt = new LRUCache<string, number>({ max: 4000, ttl: 10 * 60 * 1000 });
+const forwardedSchedulerUserParts = new LRUCache<string, true>({ max: 8000, ttl: 20 * 60 * 1000 });
+const recentPermissionEventAt = new LRUCache<string, number>({
+  max: 6000,
+  ttl: PERMISSION_DEDUPE_WINDOW_MS * 4,
+});
+const recentPermissionPromptBySession = new LRUCache<string, { at: number; signature: string }>({
+  max: 2000,
+  ttl: PERMISSION_PROMPT_DEDUPE_WINDOW_MS * 4,
+});
 
 function unwrapObservedEvent(event: unknown): EventWithType | null {
   const direct = event as { type?: unknown; properties?: unknown; payload?: unknown } | null;
@@ -73,14 +82,6 @@ function shouldSkipDuplicatePermissionEvent(scope: 'request' | 'reply', sid: str
   const key = `${scope}:${sid}:${id}`;
   const last = recentPermissionEventAt.get(key);
   recentPermissionEventAt.set(key, now);
-
-  if (recentPermissionEventAt.size > 2000) {
-    const cutoff = now - PERMISSION_DEDUPE_WINDOW_MS * 4;
-    for (const [k, ts] of recentPermissionEventAt.entries()) {
-      if (ts < cutoff) recentPermissionEventAt.delete(k);
-    }
-  }
-
   return typeof last === 'number' && now - last < PERMISSION_DEDUPE_WINDOW_MS;
 }
 
@@ -151,6 +152,30 @@ function clearAllPendingAuthorizations(deps: EventFlowDeps) {
   }
   deps.pendingAuthorizationTimers.clear();
   deps.chatPendingAuthorization.clear();
+}
+
+function pruneMessageBuffers(deps: EventFlowDeps) {
+  if (deps.msgBuffers.size <= MAX_ACTIVE_MESSAGE_BUFFERS) return;
+
+  const activeMessageIds = new Set<string>();
+  for (const mid of deps.sessionActiveMsg.values()) activeMessageIds.add(mid);
+
+  let removed = 0;
+  for (const [mid, buf] of deps.msgBuffers.entries()) {
+    if (deps.msgBuffers.size <= MAX_ACTIVE_MESSAGE_BUFFERS) break;
+    if (removed >= BUFFER_SWEEP_BATCH_SIZE) break;
+    if (activeMessageIds.has(mid)) continue;
+    if (buf.status === 'streaming') continue;
+    deps.msgBuffers.delete(mid);
+    deps.msgRole.delete(mid);
+    removed++;
+  }
+
+  if (removed > 0) {
+    bridgeLogger.debug(
+      `[BridgeFlow] pruned message buffers removed=${removed} remaining=${deps.msgBuffers.size}`,
+    );
+  }
 }
 
 function getCacheKeyBySession(
@@ -474,6 +499,7 @@ async function handleMessageUpdatedEvent(
   if (info.finish || info.time?.completed) {
     markStatus(deps.msgBuffers, mid, 'done', info.finish || 'completed');
     await flushMessage(adapter, ctx.chatId, mid, deps.msgBuffers, true);
+    pruneMessageBuffers(deps);
   }
 }
 
@@ -511,10 +537,10 @@ async function handleMessagePartUpdatedEvent(
     isSchedulerCallbackMetadata(partMeta)
   ) {
     const dedupeKey = `${sessionId}:${messageId}:${part.id}`;
-    if (forwardedSchedulerUserParts.has(dedupeKey)) {
+    if (forwardedSchedulerUserParts.get(dedupeKey)) {
       return;
     }
-    forwardedSchedulerUserParts.add(dedupeKey);
+    forwardedSchedulerUserParts.set(dedupeKey, true);
     await adapter.sendMessage(ctx.chatId, part.text).catch(() => {});
     bridgeLogger.info(
       `[BridgeFlow] scheduler-user-part-forwarded sid=${sessionId} mid=${messageId} chat=${ctx.chatId}`,
@@ -541,6 +567,7 @@ async function handleMessagePartUpdatedEvent(
       );
       markStatus(deps.msgBuffers, prev, 'done');
       await flushMessage(adapter, ctx.chatId, prev, deps.msgBuffers, true);
+      pruneMessageBuffers(deps);
     }
   }
   deps.sessionActiveMsg.set(sessionId, messageId);
@@ -582,6 +609,7 @@ async function handleMessagePartUpdatedEvent(
 
   if (part.type === 'step-finish' && buffer.status === 'streaming') {
     markStatus(deps.msgBuffers, messageId, 'done', part.reason || 'step-finish');
+    pruneMessageBuffers(deps);
   }
 
   if (!shouldFlushNow(buffer, adapterKey || undefined)) {
@@ -668,6 +696,7 @@ async function handleSessionErrorEvent(
     `[BridgeFlow] session-error sid=${sid} mid=${mid} name=${err?.name || '-'} msg=${errMsg}`,
   );
   await flushMessage(adapter, ctx.chatId, mid, deps.msgBuffers, true);
+  pruneMessageBuffers(deps);
 }
 
 async function handleSessionIdleEvent(
@@ -690,10 +719,12 @@ async function handleSessionIdleEvent(
   const buf = deps.msgBuffers.get(mid);
   if (buf && (buf.status === 'aborted' || buf.status === 'error')) {
     await flushMessage(adapter, ctx.chatId, mid, deps.msgBuffers, true);
+    pruneMessageBuffers(deps);
     return;
   }
   markStatus(deps.msgBuffers, mid, 'done', 'idle');
   await flushMessage(adapter, ctx.chatId, mid, deps.msgBuffers, true);
+  pruneMessageBuffers(deps);
 }
 
 async function handlePermissionUpdatedEvent(
@@ -782,12 +813,6 @@ async function handlePermissionUpdatedEvent(
     return;
   }
   recentPermissionPromptBySession.set(cacheKey, { at: now, signature: sig });
-  if (recentPermissionPromptBySession.size > 2000) {
-    const cutoff = now - PERMISSION_PROMPT_DEDUPE_WINDOW_MS * 4;
-    for (const [k, v] of recentPermissionPromptBySession.entries()) {
-      if (v.at < cutoff) recentPermissionPromptBySession.delete(k);
-    }
-  }
 
   clearPendingAuthorizationForChat(deps, cacheKey);
   const pending: PendingAuthorizationState = {
@@ -986,7 +1011,11 @@ export function stopGlobalEventListenerWithDeps(deps: EventFlowDeps) {
   deps.chatAwaitingSaveFile.clear();
   deps.chatMaxFileSizeMb.clear();
   deps.chatMaxFileRetry.clear();
-  
+
   clearAllPendingQuestions(deps);
   clearAllPendingAuthorizations(deps);
+  lastRouteMissWarnAt.clear();
+  forwardedSchedulerUserParts.clear();
+  recentPermissionEventAt.clear();
+  recentPermissionPromptBySession.clear();
 }

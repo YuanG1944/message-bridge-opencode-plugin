@@ -1,5 +1,6 @@
 // src/handler/index.ts
 import type { OpencodeClient } from '@opencode-ai/sdk';
+import { LRUCache } from 'lru-cache';
 import type { MessageBuffer } from '../bridge/buffer';
 import { AdapterMux } from './mux';
 import { createIncomingHandlerWithDeps } from './incoming.flow';
@@ -29,7 +30,10 @@ const chatMaxFileRetry: Map<string, number> =
   globalState.__bridge_max_file_retry || new Map<string, number>();
 const chatPendingQuestion = new Map<string, PendingQuestionState>();
 const pendingQuestionTimers = new Map<string, NodeJS.Timeout>();
-const chatHandledQuestionCalls = new Map<string, Set<string>>();
+const chatHandledQuestionCalls = new LRUCache<string, Set<string>>({
+  max: 2000,
+  ttl: 6 * 60 * 60 * 1000,
+});
 const chatPendingAuthorization = new Map<string, PendingAuthorizationState>();
 const pendingAuthorizationTimers = new Map<string, NodeJS.Timeout>();
 globalState.__bridge_max_file_size = chatMaxFileSizeMb;
