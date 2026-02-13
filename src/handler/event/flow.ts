@@ -27,6 +27,14 @@ export async function startGlobalEventListenerWithDeps(
 
   let retryCount = 0;
   let globalRetryCount = 0;
+  const GLOBAL_FORWARD_EVENT_TYPES = new Set<string>([
+    'permission.updated',
+    'permission.asked',
+    'permission.replied',
+    'question.asked',
+    'question.replied',
+    'question.rejected',
+  ]);
 
   const connect = async () => {
     try {
@@ -69,6 +77,7 @@ export async function startGlobalEventListenerWithDeps(
         const e = unwrapObservedEvent(event);
         if (deps.listenerState.shouldStopListener) break;
         if (!e) continue;
+        if (!GLOBAL_FORWARD_EVENT_TYPES.has(e.type)) continue;
         await dispatchEventByType(e, api, mux, deps);
       }
     } catch (e) {
