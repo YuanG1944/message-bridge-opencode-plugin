@@ -1,5 +1,5 @@
 // src/bridge/buffer.ts
-import type { FilePart, ToolPart, ToolState } from '@opencode-ai/sdk';
+import type { FilePart, Part, ToolPart, ToolState } from '@opencode-ai/sdk';
 import {
   SAFE_MAX_REASONING,
   SAFE_MAX_TEXT,
@@ -7,7 +7,6 @@ import {
   SAFE_MAX_TOOL_OUTPUT,
 } from '../constants';
 import { getUpdateIntervalByAdapter } from '../utils';
-import { Part } from '@opencode-ai/sdk';
 
 export type BufferStatus = 'streaming' | 'done' | 'aborted' | 'error';
 
@@ -189,85 +188,91 @@ export function buildDisplayContent(buffer: MessageBuffer): string {
 }
 
 export function applyPartToBuffer(buffer: MessageBuffer, part: Part, delta?: string) {
-  if (part.type === 'text' || part.type === 'reasoning') {
-    if (typeof delta === 'string' && delta.length > 0) {
-      if (part.type === 'reasoning') buffer.reasoning += delta;
-      else buffer.text += delta;
-    } else if (typeof part.text === 'string') {
-      const snap = part.text as string;
-      if (part.type === 'reasoning' && snap.length > buffer.reasoning.length)
-        buffer.reasoning = snap;
-      if (part.type === 'text' && snap.length > buffer.text.length) buffer.text = snap;
-    }
-    return;
-  }
-
-  if (part.type === 'tool') {
-    const toolPart = part as ToolPart;
-
-    const callID = toolPart.callID;
-    const tool = toolPart.tool;
-    const state: ToolState = toolPart.state;
-
-    const view: ToolView =
-      buffer.tools.get(callID) ||
-      ({
-        callID,
-        tool,
-        status: state.status,
-      } as ToolView);
-
-    view.tool = tool;
-    view.status = state.status;
-
-    view.input = state.input;
-
-    switch (state.status) {
-      case 'pending': {
-        break;
+  switch (part.type) {
+    case 'text':
+    case 'reasoning': {
+      if (typeof delta === 'string' && delta.length > 0) {
+        if (part.type === 'reasoning') buffer.reasoning += delta;
+        else buffer.text += delta;
+      } else if (typeof part.text === 'string') {
+        const snap = part.text as string;
+        if (part.type === 'reasoning' && snap.length > buffer.reasoning.length)
+          buffer.reasoning = snap;
+        if (part.type === 'text' && snap.length > buffer.text.length) buffer.text = snap;
       }
-
-      case 'running': {
-        if (state.title) view.title = state.title;
-        if (state.time?.start) view.start = state.time.start;
-        break;
-      }
-
-      case 'completed': {
-        view.title = state.title;
-        view.output = state.output;
-        if (state.time?.start) view.start = state.time.start;
-        if (state.time?.end) view.end = state.time.end;
-        break;
-      }
-
-      case 'error': {
-        view.error = state.error;
-        if (state.time?.start) view.start = state.time.start;
-        if (state.time?.end) view.end = state.time.end;
-        break;
-      }
+      return;
     }
 
-    buffer.tools.set(callID, view);
-    return;
-  }
+    case 'tool': {
+      const toolPart = part as ToolPart;
+      const callID = toolPart.callID;
+      const tool = toolPart.tool;
+      const state: ToolState = toolPart.state;
 
-  if (part.type === 'file') {
-    const filePart = part as FilePart;
-    if (
-      !buffer.files.some(f => f.url === filePart.url && f.filename === filePart.filename)
-    ) {
-      buffer.files.push({
-        filename: filePart.filename,
-        mime: filePart.mime,
-        url: filePart.url,
-      });
+      const view: ToolView =
+        buffer.tools.get(callID) ||
+        ({
+          callID,
+          tool,
+          status: state.status,
+        } as ToolView);
+
+      view.tool = tool;
+      view.status = state.status;
+      view.input = state.input;
+
+      switch (state.status) {
+        case 'pending': {
+          break;
+        }
+        case 'running': {
+          if (state.title) view.title = state.title;
+          if (state.time?.start) view.start = state.time.start;
+          break;
+        }
+        case 'completed': {
+          view.title = state.title;
+          view.output = state.output;
+          if (state.time?.start) view.start = state.time.start;
+          if (state.time?.end) view.end = state.time.end;
+          break;
+        }
+        case 'error': {
+          view.error = state.error;
+          if (state.time?.start) view.start = state.time.start;
+          if (state.time?.end) view.end = state.time.end;
+          break;
+        }
+      }
+
+      buffer.tools.set(callID, view);
+      return;
     }
-    return;
-  }
 
-  // 其它 part：暂不处理（renderer/后续需要再加）
+    case 'file': {
+      const filePart = part as FilePart;
+      if (!buffer.files.some(f => f.url === filePart.url && f.filename === filePart.filename)) {
+        buffer.files.push({
+          filename: filePart.filename,
+          mime: filePart.mime,
+          url: filePart.url,
+        });
+      }
+      return;
+    }
+
+    case 'subtask':
+    case 'step-start':
+    case 'step-finish':
+    case 'snapshot':
+    case 'patch':
+    case 'agent':
+    case 'retry':
+    case 'compaction': {
+      // Reserved for future platform rendering support.
+      return;
+    }
+  }
 }
 
 export function shouldFlushNow(buffer: MessageBuffer, adapterKey?: string): boolean {

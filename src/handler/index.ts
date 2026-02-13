@@ -4,7 +4,7 @@ import { LRUCache } from 'lru-cache';
 import type { MessageBuffer } from '../bridge/buffer';
 import { AdapterMux } from './mux';
 import { createIncomingHandlerWithDeps } from './incoming.flow';
-import { startGlobalEventListenerWithDeps, stopGlobalEventListenerWithDeps } from './event.flow';
+import { startGlobalEventListenerWithDeps, stopGlobalEventListenerWithDeps } from './event';
 import { globalState } from '../utils';
 import type { PendingQuestionState } from './question.proxy';
 import type { PendingAuthorizationState } from './authorization.proxy';
