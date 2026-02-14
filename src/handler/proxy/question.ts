@@ -58,6 +58,20 @@ function normalizeOptionLabel(option: Record<string, unknown>): string {
   );
 }
 
+function looksLikeFreeTextQuestion(
+  question: string,
+  id: string,
+  header: string,
+): boolean {
+  const text = `${question}\n${id}\n${header}`.toLowerCase();
+  return (
+    text.includes('workspace_id') ||
+    text.includes('worksapce_id') ||
+    text.includes('workspace id') ||
+    text.includes('intent scheduler')
+  );
+}
+
 function normalizeQuestionItem(item: unknown, index: number): NormalizedQuestionItem | null {
   if (typeof item === 'string') {
     const question = normalizeString(item);
@@ -103,6 +117,8 @@ function normalizeQuestionItem(item: unknown, index: number): NormalizedQuestion
       };
     })
     .filter((v): v is NormalizedQuestionOption => v !== null);
+  const idRaw = normalizeString(item.id);
+  const header = normalizeString(item.header) || normalizeString(item.group);
   const freeText =
     options.length === 0 ||
     item.freeText === true ||
@@ -112,10 +128,8 @@ function normalizeQuestionItem(item: unknown, index: number): NormalizedQuestion
     item.text_input === true ||
     normalizeString(item.mode).toLowerCase() === 'input' ||
     normalizeString(item.type).toLowerCase() === 'input' ||
-    normalizeString(item.inputType).toLowerCase() === 'text';
-
-  const idRaw = normalizeString(item.id);
-  const header = normalizeString(item.header) || normalizeString(item.group);
+    normalizeString(item.inputType).toLowerCase() === 'text' ||
+    looksLikeFreeTextQuestion(question, idRaw || `q${index + 1}`, header);
 
   return {
     id: idRaw || `q${index + 1}`,
@@ -192,7 +206,7 @@ function resolveSelection(
 } | null {
   const token = normalizeString(raw);
   if (!token) return null;
-  if (question.freeText && question.options.length === 0) {
+  if (question.freeText) {
     return {
       selectedIndex: -1,
       selectedLabel: token,
@@ -227,13 +241,6 @@ function resolveSelection(
     return {
       selectedIndex: contains,
       selectedLabel: question.options[contains].label,
-    };
-  }
-
-  if (question.freeText) {
-    return {
-      selectedIndex: -1,
-      selectedLabel: token,
     };
   }
 
@@ -346,7 +353,7 @@ function renderQuestionBlock(question: NormalizedQuestionItem, index: number): s
   const lines: string[] = [];
   lines.push(`### Q${index + 1}${question.header ? ` ${question.header}` : ''}`);
   lines.push(question.question);
-  if (question.freeText && question.options.length === 0) {
+  if (question.freeText) {
     lines.push('请直接回复你的答案（文本输入）。');
     return lines;
   }
@@ -358,7 +365,7 @@ function renderQuestionBlock(question: NormalizedQuestionItem, index: number): s
 }
 
 export function renderQuestionPrompt(state: PendingQuestionState): string {
-  const hasFreeText = state.payload.questions.some(q => q.freeText && q.options.length === 0);
+  const hasFreeText = state.payload.questions.some(q => q.freeText);
   const lines: string[] = [];
   lines.push('## Question');
   lines.push(
@@ -375,7 +382,7 @@ export function renderQuestionPrompt(state: PendingQuestionState): string {
 
   if (state.payload.questions.length === 1) {
     const q = state.payload.questions[0];
-    if (q.freeText && q.options.length === 0) {
+    if (q.freeText) {
       lines.push('回复示例：`你的 workspace_id`');
     } else {
       lines.push('回复示例：`1` 或 `选项文本`');
@@ -389,7 +396,7 @@ export function renderQuestionPrompt(state: PendingQuestionState): string {
 }
 
 export function renderReplyHint(state: PendingQuestionState): string {
-  const hasFreeText = state.payload.questions.some(q => q.freeText && q.options.length === 0);
+  const hasFreeText = state.payload.questions.some(q => q.freeText);
   if (hasFreeText) {
     if (state.payload.questions.length === 1) {
       return '未识别你的答案，请直接回复文本答案。';

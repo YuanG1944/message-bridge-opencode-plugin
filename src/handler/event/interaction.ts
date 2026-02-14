@@ -152,6 +152,11 @@ async function armPendingQuestionPrompt(params: {
     dueAt: Date.now() + QUESTION_TIMEOUT_MS,
   };
   deps.chatPendingQuestion.set(cacheKey, pending);
+  bridgeLogger.info(
+    `[QuestionFlow] pending-set sid=${sessionId} mid=${messageId} call=${callID} count=${payload.questions.length} shape=${payload.questions
+      .map(q => `${q.id}:${q.freeText ? 'text' : 'option'}:${q.options.length}`)
+      .join('|')}`,
+  );
 
   const adapter = mux.get(adapterKey);
   if (adapter) {

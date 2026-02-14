@@ -493,11 +493,11 @@ export const createIncomingHandlerWithDeps = (
 
         const resolved = parseUserReply(text, pendingQuestion);
         if (!resolved.ok) {
-          deps.markQuestionCallHandled(cacheKey, pendingQuestion.messageId, pendingQuestion.callID);
-          deps.clearPendingQuestionForChat(cacheKey);
           bridgeLogger.info(
-            `[QuestionFlow] invalid-option-exit adapter=${adapterKey} chat=${chatId} sid=${pendingQuestion.sessionId} call=${pendingQuestion.callID} reason=${resolved.reason}`,
+            `[QuestionFlow] invalid-option-keep-waiting adapter=${adapterKey} chat=${chatId} sid=${pendingQuestion.sessionId} call=${pendingQuestion.callID} reason=${resolved.reason}`,
           );
+          await adapter.sendMessage(chatId, renderReplyHint(pendingQuestion));
+          return;
         } else {
           const sessionId = await ensureSession();
           deps.sessionToAdapterKey.set(sessionId, adapterKey);
