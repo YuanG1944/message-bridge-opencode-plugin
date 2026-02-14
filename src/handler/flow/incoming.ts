@@ -233,6 +233,17 @@ export const createIncomingHandlerWithDeps = (
         });
       };
 
+      const abortSessionBestEffort = async (sessionId: string) => {
+        try {
+          await api.session.abort({ path: { id: sessionId } });
+          bridgeLogger.info(`[QuestionFlow] session-abort sent sid=${sessionId}`);
+        } catch (err) {
+          bridgeLogger.debug(
+            `[QuestionFlow] session-abort skipped sid=${sessionId} reason=${extractErrorMessage(err) || '-'}`,
+          );
+        }
+      };
+
       const armPendingAuthorization = async (
         sessionId: string,
         source: 'bridge.incoming' | 'bridge.question.resume',
@@ -502,14 +513,15 @@ export const createIncomingHandlerWithDeps = (
           const sessionId = await ensureSession();
           deps.sessionToAdapterKey.set(sessionId, adapterKey);
           deps.sessionToCtx.set(sessionId, { chatId, senderId });
+          let questionReplyMode: 'v2' | 'fallback' = 'fallback';
           let questionReplied = false;
           try {
-            const mode = await replyQuestionRequest(
+            questionReplyMode = await replyQuestionRequest(
               sessionId,
               pendingQuestion.callID,
               resolved.answers,
             );
-            questionReplied = mode === 'v2';
+            questionReplied = questionReplyMode === 'v2';
           } catch (replyErr) {
             bridgeLogger.warn(
               `[QuestionFlow] reply failed sid=${sessionId} requestID=${pendingQuestion.callID}`,
@@ -531,16 +543,35 @@ export const createIncomingHandlerWithDeps = (
                 }),
               },
             ];
+            let targetSessionId = sessionId;
             try {
-              await submitPrompt(sessionId, resumeParts);
-            } catch (submitErr) {
-              if (!isLikelyPermissionBlockedError(submitErr)) throw submitErr;
-              await armPendingAuthorization(
-                sessionId,
-                'bridge.question.resume',
-                resumeParts,
-                extractErrorMessage(submitErr) || '当前会话需要网页权限确认',
+              if (questionReplyMode === 'fallback') {
+                await abortSessionBestEffort(sessionId);
+              }
+              await submitPrompt(targetSessionId, resumeParts);
+              bridgeLogger.info(
+                `[QuestionFlow] resume-prompt-sent sid=${targetSessionId} call=${pendingQuestion.callID} answers=${resolved.answers.length}`,
               );
+            } catch (submitErr) {
+              if (isLikelyPermissionBlockedError(submitErr)) {
+                await armPendingAuthorization(
+                  targetSessionId,
+                  'bridge.question.resume',
+                  resumeParts,
+                  extractErrorMessage(submitErr) || '当前会话需要网页权限确认',
+                );
+              } else {
+                const nextSessionId = await createNewSession();
+                if (!nextSessionId) throw submitErr;
+                targetSessionId = nextSessionId;
+                bridgeLogger.warn(
+                  `[QuestionFlow] resume-on-current-failed switch-new oldSid=${sessionId} newSid=${nextSessionId} call=${pendingQuestion.callID} reason=${extractErrorMessage(submitErr) || '-'}`,
+                );
+                await submitPrompt(targetSessionId, resumeParts);
+                bridgeLogger.info(
+                  `[QuestionFlow] resume-prompt-sent sid=${targetSessionId} call=${pendingQuestion.callID} answers=${resolved.answers.length}`,
+                );
+              }
             }
           }
 
