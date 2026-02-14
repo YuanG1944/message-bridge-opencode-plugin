@@ -1,5 +1,5 @@
-import { buildDisplayContent } from '../bridge/buffer';
-import type { BufferStatus, MessageBuffer } from '../bridge/buffer';
+import { buildDisplayContent } from '../../bridge/buffer';
+import type { BufferStatus, MessageBuffer } from '../../bridge/buffer';
 
 export const FLOW_LOG_PREFIX = '[BridgeFlow]';
 const EXECUTION_TO_ANSWER_SPLIT_MIN_TEXT = 120;

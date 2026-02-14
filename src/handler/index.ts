@@ -1,13 +1,13 @@
 // src/handler/index.ts
 import type { OpencodeClient } from '@opencode-ai/sdk';
+import { LRUCache } from 'lru-cache';
 import type { MessageBuffer } from '../bridge/buffer';
 import { AdapterMux } from './mux';
-import { createIncomingHandlerWithDeps } from './incoming.flow';
-import { startGlobalEventListenerWithDeps, stopGlobalEventListenerWithDeps } from './event.flow';
+import { createIncomingHandlerWithDeps } from './flow';
+import { startGlobalEventListenerWithDeps, stopGlobalEventListenerWithDeps } from './event';
 import { globalState } from '../utils';
-import type { PendingQuestionState } from './question.proxy';
-import type { PendingAuthorizationState } from './authorization.proxy';
-import { extractErrorMessage } from './api.response';
+import type { PendingAuthorizationState, PendingQuestionState } from './proxy';
+import { extractErrorMessage } from './shared';
 
 type SessionContext = { chatId: string; senderId: string };
 type SelectedModel = { providerID: string; modelID: string; name?: string };
@@ -29,7 +29,10 @@ const chatMaxFileRetry: Map<string, number> =
   globalState.__bridge_max_file_retry || new Map<string, number>();
 const chatPendingQuestion = new Map<string, PendingQuestionState>();
 const pendingQuestionTimers = new Map<string, NodeJS.Timeout>();
-const chatHandledQuestionCalls = new Map<string, Set<string>>();
+const chatHandledQuestionCalls = new LRUCache<string, Set<string>>({
+  max: 2000,
+  ttl: 6 * 60 * 60 * 1000,
+});
 const chatPendingAuthorization = new Map<string, PendingAuthorizationState>();
 const pendingAuthorizationTimers = new Map<string, NodeJS.Timeout>();
 globalState.__bridge_max_file_size = chatMaxFileSizeMb;
@@ -172,6 +175,7 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
     pendingAuthorizationTimers,
     clearPendingQuestionForChat,
     clearPendingAuthorizationForChat,
+    clearAllPendingAuthorizations,
     markQuestionCallHandled,
     clearAllPendingQuestions,
     formatUserError,

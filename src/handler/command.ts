@@ -6,8 +6,9 @@ import {
   globalState,
   isBridgeAgentId,
 } from '../utils';
+import { getFileStoreCacheStats } from '../bridge/file.store';
 import { bridgeLogger, getBridgeLogFilePath } from '../logger';
-import { isRecord, readString, toApiArray, toApiRecord } from './api.response';
+import { isRecord, readString, toApiArray, toApiRecord } from './shared';
 
 type SessionListItem = { id: string; title: string };
 type AgentListItem = { id: string; name: string };
@@ -227,8 +228,12 @@ export type CommandContext = {
   chatAwaitingSaveFile: Map<string, boolean>;
   chatMaxFileSizeMb: Map<string, number>;
   chatMaxFileRetry: Map<string, number>;
+  chatPendingQuestion: Map<string, unknown>;
+  chatPendingAuthorization: Map<string, unknown>;
+  pendingAuthorizationTimers: Map<string, NodeJS.Timeout>;
   clearPendingQuestionForChat: (cacheKey: string) => void;
   clearPendingAuthorizationForChat: (cacheKey: string) => void;
+  clearAllPendingAuthorizations: () => void;
   markQuestionCallHandled: (cacheKey: string, messageId: string, callID: string) => void;
   clearAllPendingQuestions: () => void;
   ensureSession: () => Promise<string>;
@@ -260,8 +265,12 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatAwaitingSaveFile,
     chatMaxFileSizeMb,
     chatMaxFileRetry,
+    chatPendingQuestion,
+    chatPendingAuthorization,
+    pendingAuthorizationTimers,
     clearPendingQuestionForChat,
     clearPendingAuthorizationForChat,
+    clearAllPendingAuthorizations,
     clearAllPendingQuestions,
     ensureSession,
     createNewSession,
@@ -315,6 +324,35 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
   }
 
   if (normalizedCommand === 'status') {
+    const statusArg = (slash.arguments || '').trim().toLowerCase();
+    if (statusArg === 'cache') {
+      const fileStoreStats = getFileStoreCacheStats();
+      const lines: string[] = [];
+      lines.push('## Command');
+      lines.push('### Cache Status');
+      lines.push(`- sessionCache: ${sessionCache.size}`);
+      lines.push(`- sessionToCtx: ${sessionToCtx.size}`);
+      lines.push(`- sessionToAdapterKey: ${sessionToAdapterKey.size}`);
+      lines.push(`- chatAgent: ${chatAgent.size}`);
+      lines.push(`- chatModel: ${chatModel.size}`);
+      lines.push(`- chatSessionList: ${chatSessionList.size}`);
+      lines.push(`- chatAgentList: ${chatAgentList.size}`);
+      lines.push(`- chatAwaitingSaveFile: ${chatAwaitingSaveFile.size}`);
+      lines.push(`- chatMaxFileSizeMb: ${chatMaxFileSizeMb.size}`);
+      lines.push(`- chatMaxFileRetry: ${chatMaxFileRetry.size}`);
+      lines.push(`- chatPendingQuestion: ${chatPendingQuestion.size}`);
+      lines.push(`- chatPendingAuthorization: ${chatPendingAuthorization.size}`);
+      lines.push(`- pendingAuthorizationTimers: ${pendingAuthorizationTimers.size}`);
+      lines.push(`- progressMessageIds: ${globalState.__bridge_progress_msg_ids?.size || 0}`);
+      lines.push(`- feishuProcessedIds: ${globalState.__feishu_processed_ids?.size || 0}`);
+      lines.push(`- qqProcessedIds: ${globalState.__qq_processed_ids?.size || 0}`);
+      lines.push(
+        `- fileStore: chats=${fileStoreStats.trackedChats}, seenChats=${fileStoreStats.seenChats}, seenFiles=${fileStoreStats.seenFiles}, pendingChats=${fileStoreStats.pendingChats}, pendingFiles=${fileStoreStats.pendingFiles}`,
+      );
+      await sendCommandMessage(lines.join('\n'));
+      return true;
+    }
+
     const pid = process.pid;
     const startedAtMs = Date.now() - Math.floor(process.uptime() * 1000);
     const startedAt = new Date(startedAtMs).toISOString();
@@ -721,13 +759,16 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatMaxFileSizeMb.clear();
     chatMaxFileRetry.clear();
     clearAllPendingQuestions();
-    clearPendingAuthorizationForChat(cacheKey);
+    clearAllPendingAuthorizations();
 
     if (globalState.__bridge_progress_msg_ids) {
       globalState.__bridge_progress_msg_ids.clear();
     }
     if (globalState.__feishu_processed_ids) {
       globalState.__feishu_processed_ids.clear();
+    }
+    if (globalState.__qq_processed_ids) {
+      globalState.__qq_processed_ids.clear();
     }
 
     const sessionId = await createNewSession();

@@ -1,5 +1,5 @@
 // src/feishu/feishu.renderer.ts
-import { sanitizeTemplateMarkers } from '../utils';
+import { sanitizeLarkMdForCard, sanitizeTemplateMarkers } from '../utils';
 
 type FeishuCard = {
   config?: { wide_screen_mode?: boolean };
@@ -39,7 +39,7 @@ function sanitizeCardValue<T>(value: T): T {
 function larkMd(content: string) {
   return {
     tag: 'div',
-    text: { tag: 'lark_md', content: content },
+    text: { tag: 'lark_md', content: sanitizeLarkMdForCard(content) },
   };
 }
 
@@ -48,7 +48,7 @@ function hr() {
 }
 
 function spacer() {
-  return { tag: 'div', text: { tag: 'lark_md', content: ' ' } };
+  return larkMd(' ');
 }
 
 function collapsiblePanel(title: string, content: string, expanded = false, borderColor?: string) {
@@ -444,13 +444,7 @@ export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): st
   const finalAnswer = trimSafe(answer);
 
   if (finalError) {
-    elements.push({
-      tag: 'div',
-      text: {
-        tag: 'lark_md',
-        content: finalError,
-      },
-    });
+    elements.push(larkMd(finalError));
   }
 
   if (finalCommand) {
@@ -461,42 +455,20 @@ export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): st
     if (rendered) {
       elements.push(...rendered);
     } else {
-      elements.push({
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
-          content: finalCommand,
-        },
-      });
+      elements.push(larkMd(finalCommand));
     }
   }
 
   if (finalAuthorization) {
     if (elements.length > 0) elements.push(hr());
-    elements.push({
-      tag: 'div',
-      text: {
-        tag: 'lark_md',
-        content: finalAuthorization,
-      },
-    });
+    elements.push(larkMd(finalAuthorization));
   }
 
   if (finalAnswer) {
     if (elements.length > 0) elements.push(hr());
-
-    elements.push({
-      tag: 'div',
-      text: {
-        tag: 'lark_md',
-        content: finalAnswer,
-      },
-    });
+    elements.push(larkMd(finalAnswer));
   } else if (!status.trim() && !thinking.trim()) {
-    elements.push({
-      tag: 'div',
-      text: { tag: 'lark_md', content: 'Allocating resources...' },
-    });
+    elements.push(larkMd('Allocating resources...'));
   }
 
   if (status.trim()) {
@@ -504,10 +476,7 @@ export function renderFeishuCardFromHandlerMarkdown(handlerMarkdown: string): st
 
     if (paths.length > 0) {
       if (cleanStatus) {
-        elements.push({
-          tag: 'div',
-          text: { tag: 'lark_md', content: cleanStatus },
-        });
+        elements.push(larkMd(cleanStatus));
       }
       elements.push(hr());
       elements.push({

@@ -110,6 +110,7 @@ These are implemented directly against OpenCode APIs:
 * `/abort` → force-abort current session generation
 * `/reset` / `/restart` → reset bridge runtime state and create a new session
 * `/status` → show runtime status (session / agent / model / pid / uptime)
+* `/status cache` → show in-memory cache sizes (session maps / pending states / file store / dedupe sets)
 * `/sessions` → list sessions (reply with `/sessions <id>` or `/sessions <index>` to bind)
 * `/sessions delete 1,2,3` → batch delete sessions by index/id
 * `/sessions delete all` → delete all sessions except current one
@@ -145,6 +146,7 @@ Custom commands are supported via:
 Session switching via `/sessions` is fully supported. The list is returned to the chat, and you can reply with `/sessions <id>` **or** `/sessions <index>` to bind this chat to the chosen session.
 Session batch deletion is supported via `/sessions delete ...`, and `/sessions delete all` keeps the current active session.
 File upload size limit can be adjusted per chat with `/maxFileSize <xmb>` (default 10MB).
+Use `/status cache` to quickly inspect current cache usage and troubleshoot memory growth.
 
 If your OpenCode setup provides additional slash commands, they will still be forwarded via `session.command` unless explicitly handled above.
 
@@ -176,6 +178,25 @@ BRIDGE_DEBUG=true BRIDGE_LOG_FILE=/tmp/bridge.log opencode web
 ```
 
 You can also check the current log path via `/status` (`logFile` field).
+
+---
+
+## 🗂️ Cache Strategy
+
+The bridge uses bounded in-memory caches to avoid unbounded growth during long-running sessions:
+
+* LRU/TTL caches are used for message mapping and dedupe (platform adapters + event flow).
+* File store caches (`seenFiles` / `pendingFiles`) are now pruned by TTL and size:
+* `seenFiles`: 7 days TTL, up to 4000 entries per chat.
+* `pendingFiles`: 24 hours TTL, up to 200 entries per chat.
+* A global tracked-chat cap is applied to both file caches to limit total memory footprint.
+* `/restart` now clears bridge runtime caches more completely (including Feishu/QQ dedupe sets and pending authorization state).
+
+For debugging, run:
+
+```bash
+/status cache
+```
 
 ---
 

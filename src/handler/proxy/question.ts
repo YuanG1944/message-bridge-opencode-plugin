@@ -12,6 +12,7 @@ export type NormalizedQuestionItem = {
   header?: string;
   question: string;
   options: NormalizedQuestionOption[];
+  freeText: boolean;
   multiple: boolean;
 };
 
@@ -47,45 +48,103 @@ function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeOptionLabel(option: Record<string, unknown>): string {
+  return (
+    normalizeString(option.label) ||
+    normalizeString(option.text) ||
+    normalizeString(option.title) ||
+    normalizeString(option.value) ||
+    normalizeString(option.name)
+  );
+}
+
 function normalizeQuestionItem(item: unknown, index: number): NormalizedQuestionItem | null {
+  if (typeof item === 'string') {
+    const question = normalizeString(item);
+    if (!question) return null;
+    return {
+      id: `q${index + 1}`,
+      question,
+      options: [],
+      freeText: true,
+      multiple: false,
+    };
+  }
   if (!isRecord(item)) return null;
 
-  const question = normalizeString(item.question);
+  const question =
+    normalizeString(item.question) ||
+    normalizeString(item.prompt) ||
+    normalizeString(item.title) ||
+    normalizeString(item.text);
   if (!question) return null;
 
-  const optionsRaw = Array.isArray(item.options) ? item.options : [];
+  const optionsRaw = Array.isArray(item.options)
+    ? item.options
+    : Array.isArray(item.choices)
+      ? item.choices
+      : Array.isArray(item.items)
+        ? item.items
+      : [];
   const options: NormalizedQuestionOption[] = optionsRaw
     .map(option => {
+      if (typeof option === 'string') {
+        const label = normalizeString(option);
+        if (!label) return null;
+        return { label };
+      }
       if (!isRecord(option)) return null;
-      const label = normalizeString(option.label);
+      const label = normalizeOptionLabel(option);
       if (!label) return null;
-      const description = normalizeString(option.description);
+      const description = normalizeString(option.description) || normalizeString(option.detail);
       return {
         label,
         ...(description ? { description } : {}),
       };
     })
     .filter((v): v is NormalizedQuestionOption => v !== null);
-
-  if (options.length === 0) return null;
+  const freeText =
+    options.length === 0 ||
+    item.freeText === true ||
+    item.allow_text === true ||
+    item.allowFreeText === true ||
+    item.textInput === true ||
+    item.text_input === true ||
+    normalizeString(item.mode).toLowerCase() === 'input' ||
+    normalizeString(item.type).toLowerCase() === 'input' ||
+    normalizeString(item.inputType).toLowerCase() === 'text';
 
   const idRaw = normalizeString(item.id);
-  const header = normalizeString(item.header);
+  const header = normalizeString(item.header) || normalizeString(item.group);
 
   return {
     id: idRaw || `q${index + 1}`,
     ...(header ? { header } : {}),
     question,
     options,
+    freeText,
     multiple: item.multiple === true,
   };
 }
 
 export function extractQuestionPayload(input: unknown): NormalizedQuestionPayload | null {
   const root = isRecord(input) ? input : null;
-  if (!root) return null;
-
-  const questionsRaw = Array.isArray(root.questions) ? root.questions : [];
+  const questionsRaw = Array.isArray(input)
+    ? input
+    : Array.isArray(root?.questions)
+      ? (root?.questions as unknown[])
+      : Array.isArray(root?.question)
+        ? (root?.question as unknown[])
+        : root?.question
+          ? [root.question]
+          : root?.input && isRecord(root.input) && Array.isArray((root.input as Record<string, unknown>).questions)
+            ? ((root.input as Record<string, unknown>).questions as unknown[])
+            : root?.input && isRecord(root.input) && (root.input as Record<string, unknown>).question
+              ? [(root.input as Record<string, unknown>).question]
+              : root &&
+                    (root.question || root.prompt || root.title || root.text || root.options || root.choices)
+                ? [root]
+                : [];
   const questions = questionsRaw
     .map((item, idx) => normalizeQuestionItem(item, idx))
     .filter((v): v is NormalizedQuestionItem => v !== null);
@@ -133,6 +192,12 @@ function resolveSelection(
 } | null {
   const token = normalizeString(raw);
   if (!token) return null;
+  if (question.freeText && question.options.length === 0) {
+    return {
+      selectedIndex: -1,
+      selectedLabel: token,
+    };
+  }
 
   if (/^\d+$/.test(token)) {
     const idx = Number(token) - 1;
@@ -162,6 +227,13 @@ function resolveSelection(
     return {
       selectedIndex: contains,
       selectedLabel: question.options[contains].label,
+    };
+  }
+
+  if (question.freeText) {
+    return {
+      selectedIndex: -1,
+      selectedLabel: token,
     };
   }
 
@@ -250,6 +322,15 @@ export function parseUserReply(
 
 export function buildDefaultAnswers(state: PendingQuestionState): ResolvedQuestionAnswer[] {
   return state.payload.questions.map((question, idx) => {
+    if (question.freeText && question.options.length === 0) {
+      return {
+        questionId: question.id,
+        questionIndex: idx,
+        selectedIndex: -1,
+        selectedLabel: '',
+        raw: 'default',
+      };
+    }
     const selected = pickDefaultOption(question);
     return {
       questionId: question.id,
@@ -265,6 +346,10 @@ function renderQuestionBlock(question: NormalizedQuestionItem, index: number): s
   const lines: string[] = [];
   lines.push(`### Q${index + 1}${question.header ? ` ${question.header}` : ''}`);
   lines.push(question.question);
+  if (question.freeText && question.options.length === 0) {
+    lines.push('请直接回复你的答案（文本输入）。');
+    return lines;
+  }
   question.options.forEach((option, idx) => {
     lines.push(`${idx + 1}. ${option.label}`);
     if (option.description) lines.push(`   - ${option.description}`);
@@ -273,9 +358,14 @@ function renderQuestionBlock(question: NormalizedQuestionItem, index: number): s
 }
 
 export function renderQuestionPrompt(state: PendingQuestionState): string {
+  const hasFreeText = state.payload.questions.some(q => q.freeText && q.options.length === 0);
   const lines: string[] = [];
   lines.push('## Question');
-  lines.push('检测到本轮需要你选择选项，请直接回复答案：');
+  lines.push(
+    hasFreeText
+      ? '检测到本轮需要你回答问题，请直接回复答案：'
+      : '检测到本轮需要你选择选项，请直接回复答案：',
+  );
   lines.push('');
 
   state.payload.questions.forEach((q, idx) => {
@@ -284,9 +374,14 @@ export function renderQuestionPrompt(state: PendingQuestionState): string {
   });
 
   if (state.payload.questions.length === 1) {
-    lines.push('回复示例：`1` 或 `选项文本`');
+    const q = state.payload.questions[0];
+    if (q.freeText && q.options.length === 0) {
+      lines.push('回复示例：`你的 workspace_id`');
+    } else {
+      lines.push('回复示例：`1` 或 `选项文本`');
+    }
   } else {
-    lines.push('回复示例：`Q1:2,Q2:1` 或 `2,1`');
+    lines.push('回复示例：`Q1:2,Q2:你的答案` 或 `2,你的答案`');
   }
   lines.push('15分钟内未回复将自动取消本轮提问。');
 
@@ -294,6 +389,13 @@ export function renderQuestionPrompt(state: PendingQuestionState): string {
 }
 
 export function renderReplyHint(state: PendingQuestionState): string {
+  const hasFreeText = state.payload.questions.some(q => q.freeText && q.options.length === 0);
+  if (hasFreeText) {
+    if (state.payload.questions.length === 1) {
+      return '未识别你的答案，请直接回复文本答案。';
+    }
+    return '未识别你的答案，请回复 `Q1:2,Q2:你的答案`（或按顺序 `2,你的答案`）。';
+  }
   if (state.payload.questions.length === 1) {
     return '未识别你的答案，请回复 `1`/`2`/`3` 或直接回复选项文本。';
   }

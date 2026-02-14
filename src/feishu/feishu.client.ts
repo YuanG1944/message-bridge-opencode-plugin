@@ -26,7 +26,7 @@ import {
 } from './patch';
 import { LoggerLevel } from '@larksuiteoapi/node-sdk';
 import { BRIDGE_FEISHU_RESPONSE_TIMEOUT_MS } from '../constants';
-import { sanitizeTemplateMarkers } from '../utils';
+import { sanitizeLarkMdForCard } from '../utils';
 
 function clip(s: string, n = 2000) {
   if (!s) return '';
@@ -77,6 +77,37 @@ function isUnresolvedVariableError(payload: unknown): boolean {
       const rec = cur as Record<string, unknown>;
       const code = rec.code;
       if (code === 230099) return true;
+
+      for (const v of Object.values(rec)) stack.push(v);
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function isNotCardMessageError(payload: unknown): boolean {
+  const stack: unknown[] = [payload];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (cur == null) continue;
+
+    if (typeof cur === 'string') {
+      if (/this message is not a card|not a card|errcode:\s*230001|230001/i.test(cur)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (Array.isArray(cur)) {
+      for (const v of cur) stack.push(v);
+      continue;
+    }
+
+    if (typeof cur === 'object') {
+      const rec = cur as Record<string, unknown>;
+      const code = rec.code;
+      if (code === 230001) return true;
 
       for (const v of Object.values(rec)) stack.push(v);
       continue;
@@ -777,7 +808,7 @@ export class FeishuClient {
       elements: [
         {
           tag: 'div',
-          text: { tag: 'lark_md', content: sanitizeTemplateMarkers(raw) },
+          text: { tag: 'lark_md', content: sanitizeLarkMdForCard(raw) },
         },
       ],
     });
@@ -789,15 +820,10 @@ export class FeishuClient {
 
     const chunks: string[] = [];
 
-    const walk = (node: unknown) => {
+    const walkContent = (node: unknown) => {
       if (node == null) return;
-      if (typeof node === 'string') {
-        const s = node.trim();
-        if (s) chunks.push(s);
-        return;
-      }
       if (Array.isArray(node)) {
-        for (const item of node) walk(item);
+        for (const item of node) walkContent(item);
         return;
       }
       if (typeof node === 'object') {
@@ -808,14 +834,14 @@ export class FeishuClient {
             if (s) chunks.push(s);
             continue;
           }
-          walk(v);
+          walkContent(v);
         }
       }
     };
 
     if (raw.startsWith('{') && raw.endsWith('}')) {
       try {
-        walk(JSON.parse(raw));
+        walkContent(JSON.parse(raw));
       } catch {
         // ignore parse error and fallback to raw text
       }
@@ -956,7 +982,14 @@ export class FeishuClient {
 
       if (res.code !== 0 && isUnresolvedVariableError(res)) {
         bridgeLogger.warn(
-          `[Feishu] ⚠️ Card edit unresolved variable (201008), fallback to text patch msg=${messageId}`,
+          `[Feishu] ⚠️ Card edit unresolved variable (201008), fallback to sendMessage msg=${messageId}`,
+        );
+        return false;
+      }
+
+      if (res.code !== 0 && isNotCardMessageError(res)) {
+        bridgeLogger.warn(
+          `[Feishu] ⚠️ edit target is not card, fallback to text patch msg=${messageId}`,
         );
         return await this.patchTextMessage(messageId, text);
       }
@@ -965,7 +998,13 @@ export class FeishuClient {
     } catch (e) {
       if (isUnresolvedVariableError(e)) {
         bridgeLogger.warn(
-          `[Feishu] ⚠️ Card edit unresolved variable (201008), fallback to text patch msg=${messageId}`,
+          `[Feishu] ⚠️ Card edit unresolved variable (201008), fallback to sendMessage msg=${messageId}`,
+        );
+        return false;
+      }
+      if (isNotCardMessageError(e)) {
+        bridgeLogger.warn(
+          `[Feishu] ⚠️ edit target is not card, fallback to text patch msg=${messageId}`,
         );
         return await this.patchTextMessage(messageId, text);
       }

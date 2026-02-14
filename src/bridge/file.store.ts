@@ -16,6 +16,14 @@ export type StoredFileRecord = {
   savedAt: number;
 };
 
+export type FileStoreCacheStats = {
+  trackedChats: number;
+  seenChats: number;
+  seenFiles: number;
+  pendingChats: number;
+  pendingFiles: number;
+};
+
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error && err.message) return err.message;
   if (typeof err === 'string') return err;
@@ -31,6 +39,11 @@ type SaveResult = {
 
 const pendingFiles = new Map<string, StoredFileRecord[]>();
 const seenFiles = new Map<string, Map<string, StoredFileRecord>>();
+const MAX_TRACKED_CHATS = 2000;
+const MAX_SEEN_FILES_PER_CHAT = 4000;
+const SEEN_FILE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_PENDING_FILES_PER_CHAT = 200;
+const PENDING_FILE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const FALLBACK_STORE_DIR = path.join(process.cwd(), 'bridge_files');
 let configuredStoreDir: string | undefined;
@@ -110,6 +123,53 @@ function hashBuffer(buf: Buffer): string {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
+function trimMapSize<K, V>(store: Map<K, V>, max: number): void {
+  while (store.size > max) {
+    const first = store.keys().next().value as K | undefined;
+    if (first === undefined) break;
+    store.delete(first);
+  }
+}
+
+function touchChatStore<T>(store: Map<string, T>, chatKey: string, value: T): void {
+  store.delete(chatKey);
+  store.set(chatKey, value);
+}
+
+function pruneSeenCacheForChat(chatKey: string, now = Date.now()): Map<string, StoredFileRecord> {
+  const seenByChat = seenFiles.get(chatKey) || new Map<string, StoredFileRecord>();
+  for (const [digest, record] of seenByChat.entries()) {
+    if (now - record.savedAt > SEEN_FILE_TTL_MS) {
+      seenByChat.delete(digest);
+    }
+  }
+  trimMapSize(seenByChat, MAX_SEEN_FILES_PER_CHAT);
+  if (seenByChat.size > 0) {
+    touchChatStore(seenFiles, chatKey, seenByChat);
+  } else {
+    seenFiles.delete(chatKey);
+  }
+  trimMapSize(seenFiles, MAX_TRACKED_CHATS);
+  return seenByChat;
+}
+
+function prunePendingForChat(chatKey: string, now = Date.now()): StoredFileRecord[] {
+  const current = pendingFiles.get(chatKey) || [];
+  const filtered = current.filter(item => now - item.savedAt <= PENDING_FILE_TTL_MS);
+  const next =
+    filtered.length > MAX_PENDING_FILES_PER_CHAT
+      ? filtered.slice(filtered.length - MAX_PENDING_FILES_PER_CHAT)
+      : filtered;
+
+  if (next.length > 0) {
+    touchChatStore(pendingFiles, chatKey, next);
+  } else {
+    pendingFiles.delete(chatKey);
+  }
+  trimMapSize(pendingFiles, MAX_TRACKED_CHATS);
+  return next;
+}
+
 async function fileExists(filePath: string): Promise<boolean> {
   try {
     await fs.stat(filePath);
@@ -158,11 +218,7 @@ export async function saveFilePartToLocal(
     const filename = part.filename || 'file';
     const digest = hashBuffer(buffer);
 
-    let seenByChat = seenFiles.get(chatKey);
-    if (!seenByChat) {
-      seenByChat = new Map<string, StoredFileRecord>();
-      seenFiles.set(chatKey, seenByChat);
-    }
+    const seenByChat = pruneSeenCacheForChat(chatKey);
 
     const existing = seenByChat.get(digest);
     if (existing && (await fileExists(existing.path))) {
@@ -186,13 +242,21 @@ export async function saveFilePartToLocal(
       savedAt: Date.now(),
     };
 
+    seenByChat.delete(digest);
     seenByChat.set(digest, record);
+    touchChatStore(seenFiles, chatKey, seenByChat);
+    trimMapSize(seenFiles, MAX_TRACKED_CHATS);
 
     const enqueue = options?.enqueue !== false;
     if (enqueue) {
-      const list = pendingFiles.get(chatKey) || [];
+      const list = prunePendingForChat(chatKey);
       list.push(record);
-      pendingFiles.set(chatKey, list);
+      const next =
+        list.length > MAX_PENDING_FILES_PER_CHAT
+          ? list.slice(list.length - MAX_PENDING_FILES_PER_CHAT)
+          : list;
+      touchChatStore(pendingFiles, chatKey, next);
+      trimMapSize(pendingFiles, MAX_TRACKED_CHATS);
     }
 
     bridgeLogger.info(
@@ -213,7 +277,7 @@ export async function saveFilePartToLocal(
 }
 
 export async function drainPendingFileParts(chatKey: string): Promise<FilePartInput[]> {
-  const list = pendingFiles.get(chatKey) || [];
+  const list = prunePendingForChat(chatKey);
   pendingFiles.delete(chatKey);
   if (list.length > 0) {
     bridgeLogger.info(`[FileStore] 📤 draining ${list.length} file(s) chat=${chatKey}`);
@@ -241,5 +305,26 @@ export async function drainPendingFileParts(chatKey: string): Promise<FilePartIn
 }
 
 export function peekPendingFileRecords(chatKey: string): StoredFileRecord[] {
-  return pendingFiles.get(chatKey) || [];
+  return prunePendingForChat(chatKey);
+}
+
+export function getFileStoreCacheStats(): FileStoreCacheStats {
+  let seenFilesCount = 0;
+  for (const seenByChat of seenFiles.values()) {
+    seenFilesCount += seenByChat.size;
+  }
+
+  let pendingFilesCount = 0;
+  for (const list of pendingFiles.values()) {
+    pendingFilesCount += list.length;
+  }
+
+  const trackedChats = new Set<string>([...seenFiles.keys(), ...pendingFiles.keys()]).size;
+  return {
+    trackedChats,
+    seenChats: seenFiles.size,
+    seenFiles: seenFilesCount,
+    pendingChats: pendingFiles.size,
+    pendingFiles: pendingFilesCount,
+  };
 }

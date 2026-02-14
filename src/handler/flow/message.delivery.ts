@@ -1,8 +1,8 @@
-import type { BridgeAdapter } from '../types';
-import { simpleHash } from '../bridge/buffer';
-import type { MessageBuffer } from '../bridge/buffer';
-import { sleep } from '../utils';
-import { bridgeLogger } from '../logger';
+import type { BridgeAdapter } from '../../types';
+import { simpleHash } from '../../bridge/buffer';
+import type { MessageBuffer } from '../../bridge/buffer';
+import { sleep } from '../../utils';
+import { bridgeLogger } from '../../logger';
 
 type SessionContext = { chatId: string; senderId: string };
 

@@ -8,6 +8,7 @@ import type {
 import type { TextPartInput, FilePartInput } from '@opencode-ai/sdk';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { LRUCache } from 'lru-cache';
 import { QQClient } from './qq.client';
 import { QQRenderer, extractFilesFromHandlerMarkdown, RenderedFile } from './qq.renderer';
 import { resolveOutgoingLocalFiles } from '../bridge/outgoing.file';
@@ -22,19 +23,31 @@ export class QQAdapter implements BridgeAdapter {
   private client: QQClient;
   private renderer: QQRenderer;
   private config: QQConfig;
-  private sentFilesByMessage: Map<string, Set<string>>;
+  private sentFilesByMessage: LRUCache<string, Set<string>>;
   private outgoingFileCfg: OutgoingFileConfig;
-  private pendingStreamingMessages: Set<string> = new Set();
+  private pendingStreamingMessages: LRUCache<string, true> = new LRUCache<string, true>({
+    max: 4000,
+    ttl: 2 * 60 * 60 * 1000,
+  });
   private virtualMessageCounter: number = 0;
-  private virtualToRealMessage: Map<string, string> = new Map();
+  private virtualToRealMessage: LRUCache<string, string> = new LRUCache<string, string>({
+    max: 6000,
+    ttl: 6 * 60 * 60 * 1000,
+  });
   // 保存每个 chatId 对应的最后一条用户消息 ID（用于群聊回复）
-  private lastUserMessageIdByChat: Map<string, string> = new Map();
+  private lastUserMessageIdByChat: LRUCache<string, string> = new LRUCache<string, string>({
+    max: 4000,
+    ttl: 24 * 60 * 60 * 1000,
+  });
 
   constructor(config: QQConfig) {
     this.config = config;
     this.client = new QQClient(config);
     this.renderer = new QQRenderer();
-    this.sentFilesByMessage = new Map();
+    this.sentFilesByMessage = new LRUCache<string, Set<string>>({
+      max: 6000,
+      ttl: 6 * 60 * 60 * 1000,
+    });
     this.outgoingFileCfg = {
       enabled: Boolean(config.auto_send_local_files),
       maxMb: config.auto_send_local_files_max_mb ?? 20,
@@ -78,6 +91,10 @@ export class QQAdapter implements BridgeAdapter {
   }
 
   async stop(): Promise<void> {
+    this.sentFilesByMessage.clear();
+    this.pendingStreamingMessages.clear();
+    this.virtualToRealMessage.clear();
+    this.lastUserMessageIdByChat.clear();
     await this.client.stop();
   }
 
@@ -115,7 +132,7 @@ export class QQAdapter implements BridgeAdapter {
     if (isStreaming && !isFinal) {
       const virtualId = this.newVirtualMessageId();
       const key = this.flowMessageKey(chatId, virtualId);
-      this.pendingStreamingMessages.add(key);
+      this.pendingStreamingMessages.set(key, true);
       bridgeLogger.debug(`[QQ] streaming in progress, return virtual msg chat=${chatId} virtualMsg=${virtualId}`);
       return virtualId;
     }
@@ -123,7 +140,7 @@ export class QQAdapter implements BridgeAdapter {
     // 流式输出完成，清除标记并发送消息
     if (isFinal) {
       // 清除所有相关的流式标记
-      for (const key of this.pendingStreamingMessages) {
+      for (const key of this.pendingStreamingMessages.keys()) {
         if (key.startsWith(`${chatId}:`)) {
           this.pendingStreamingMessages.delete(key);
         }
@@ -173,8 +190,8 @@ export class QQAdapter implements BridgeAdapter {
 
       // 如果是流式输出且未完成，不编辑消息
       if (isStreaming && !isFinal) {
-        if (!this.pendingStreamingMessages.has(key)) {
-          this.pendingStreamingMessages.add(key);
+        if (!this.pendingStreamingMessages.get(key)) {
+          this.pendingStreamingMessages.set(key, true);
         }
         bridgeLogger.debug(`[QQ] streaming in progress, skip edit chat=${chatId} virtualMsg=${messageId}`);
         return true; // 返回 true 表示"成功"，但不实际编辑

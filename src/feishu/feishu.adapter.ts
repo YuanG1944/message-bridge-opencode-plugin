@@ -7,6 +7,7 @@ import type {
 } from '../types';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { LRUCache } from 'lru-cache';
 import { FeishuClient } from './feishu.client';
 import { FeishuRenderer, extractFilesFromHandlerMarkdown, RenderedFile } from './feishu.renderer';
 import { resolveOutgoingLocalFiles } from '../bridge/outgoing.file';
@@ -21,14 +22,17 @@ export class FeishuAdapter implements BridgeAdapter {
   private client: FeishuClient;
   private renderer: FeishuRenderer;
   private config: FeishuConfig;
-  private sentFilesByMessage: Map<string, Set<string>>;
+  private sentFilesByMessage: LRUCache<string, Set<string>>;
   private outgoingFileCfg: OutgoingFileConfig;
 
   constructor(config: FeishuConfig) {
     this.config = config;
     this.client = new FeishuClient(config);
     this.renderer = new FeishuRenderer();
-    this.sentFilesByMessage = new Map();
+    this.sentFilesByMessage = new LRUCache<string, Set<string>>({
+      max: 6000,
+      ttl: 6 * 60 * 60 * 1000,
+    });
     this.outgoingFileCfg = {
       enabled: Boolean(config.auto_send_local_files),
       maxMb: config.auto_send_local_files_max_mb ?? 20,
@@ -45,6 +49,7 @@ export class FeishuAdapter implements BridgeAdapter {
   }
 
   async stop(): Promise<void> {
+    this.sentFilesByMessage.clear();
     await this.client.stop();
   }
 
