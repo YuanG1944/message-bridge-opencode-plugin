@@ -254,6 +254,20 @@ function splitInputTokens(raw: string): string[] {
     .filter(Boolean);
 }
 
+function buildDeterministicAnswer(
+  question: NormalizedQuestionItem,
+  questionIndex: number,
+): ResolvedQuestionAnswer | null {
+  if (question.options.length !== 1) return null;
+  return {
+    questionId: question.id,
+    questionIndex,
+    selectedIndex: 0,
+    selectedLabel: question.options[0].label,
+    raw: 'auto-single-option',
+  };
+}
+
 export function parseUserReply(
   text: string,
   state: PendingQuestionState,
@@ -324,6 +338,45 @@ export function parseUserReply(
     }
   }
 
+  const unresolved = questions
+    .map((_, i) => i)
+    .filter(i => !answers[i]);
+  const unresolvedDeterministic = unresolved.filter(i => buildDeterministicAnswer(questions[i], i));
+  const unresolvedVariable = unresolved.filter(i => !buildDeterministicAnswer(questions[i], i));
+
+  // Allow partial reply when all remaining questions are deterministic single-option picks.
+  for (const i of unresolvedDeterministic) {
+    const auto = buildDeterministicAnswer(questions[i], i);
+    if (auto) answers[i] = auto;
+  }
+  if (answers.every(Boolean)) {
+    return { ok: true, answers };
+  }
+
+  // Map tokens to non-deterministic unanswered questions in order.
+  if (tokens.length === unresolvedVariable.length) {
+    for (let i = 0; i < unresolvedVariable.length; i++) {
+      const qIdx = unresolvedVariable[i];
+      const selected = resolveSelection(questions[qIdx], tokens[i]);
+      if (!selected) return { ok: false, reason: `unmatched-q${qIdx + 1}` };
+      answers[qIdx] = {
+        questionId: questions[qIdx].id,
+        questionIndex: qIdx,
+        selectedIndex: selected.selectedIndex,
+        selectedLabel: selected.selectedLabel,
+        raw: tokens[i],
+      };
+    }
+    for (const i of unresolvedDeterministic) {
+      if (answers[i]) continue;
+      const auto = buildDeterministicAnswer(questions[i], i);
+      if (auto) answers[i] = auto;
+    }
+    if (answers.every(Boolean)) {
+      return { ok: true, answers };
+    }
+  }
+
   return { ok: false, reason: 'incomplete-multi' };
 }
 
@@ -366,6 +419,7 @@ function renderQuestionBlock(question: NormalizedQuestionItem, index: number): s
 
 export function renderQuestionPrompt(state: PendingQuestionState): string {
   const hasFreeText = state.payload.questions.some(q => q.freeText);
+  const hasAutoSingleOption = state.payload.questions.some(q => !q.freeText && q.options.length === 1);
   const lines: string[] = [];
   lines.push('## Question');
   lines.push(
@@ -379,6 +433,10 @@ export function renderQuestionPrompt(state: PendingQuestionState): string {
     lines.push(...renderQuestionBlock(q, idx));
     lines.push('');
   });
+  if (hasAutoSingleOption) {
+    lines.push('说明：只有一个可选项的问题会自动选择，你只需回答文本/多选项问题。');
+    lines.push('');
+  }
 
   if (state.payload.questions.length === 1) {
     const q = state.payload.questions[0];
