@@ -159,6 +159,8 @@ function inferMimeFromFilename(filename?: string): string {
 export class TelegramClient {
   private readonly config: TelegramConfig;
   private readonly baseUrl: string;
+  private static readonly API_TIMEOUT_MS = 30000;
+  private static readonly FILE_API_TIMEOUT_MS = 120000;
   private running = false;
   private updateOffset = 0;
   private pollPromise: Promise<void> | null = null;
@@ -188,10 +190,12 @@ export class TelegramClient {
       return;
     }
 
-    await this.deleteWebhook(false).catch(() => {});
     this.running = true;
     this.pollingAbortController = new AbortController();
     this.pollPromise = this.pollLoop(handler);
+    void this.deleteWebhook(false).catch(err => {
+      bridgeLogger.warn('[Telegram] deleteWebhook before polling failed', asError(err).message);
+    });
     bridgeLogger.info(`[Telegram] polling started ${this.instanceTag}`);
   }
 
@@ -345,7 +349,21 @@ export class TelegramClient {
 
   private async downloadFileByPath(filePath: string, maxBytes: number): Promise<Buffer> {
     const url = `https://api.telegram.org/file/bot${this.config.bot_token}/${filePath}`;
-    const resp = await fetch(url, { method: 'GET' });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TelegramClient.FILE_API_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch(url, { method: 'GET', signal: ctrl.signal });
+    } catch (err) {
+      if (ctrl.signal.aborted) {
+        throw new Error(
+          `[Telegram] file download timeout after ${TelegramClient.FILE_API_TIMEOUT_MS}ms`,
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!resp.ok) {
       throw new Error(`[Telegram] download failed: ${resp.status}`);
     }
@@ -710,14 +728,32 @@ export class TelegramClient {
     method: string,
     payload: Record<string, unknown>,
     signal?: AbortSignal,
+    timeoutMs = TelegramClient.API_TIMEOUT_MS,
   ): Promise<T | null> {
     const url = `${this.baseUrl}/${method}`;
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      ...(signal ? { signal } : {}),
-    });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const onAbort = () => ctrl.abort();
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal,
+      });
+    } catch (err) {
+      const upstreamAborted = signal?.aborted === true;
+      if (ctrl.signal.aborted && !upstreamAborted) {
+        throw new Error(`[Telegram] ${method} timeout after ${timeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    }
 
     const json = (await resp.json()) as TelegramApiResponse<T>;
     if (!resp.ok || !json.ok) {
@@ -728,10 +764,23 @@ export class TelegramClient {
 
   private async apiCallMultipart<T>(method: string, form: FormData): Promise<T | null> {
     const url = `${this.baseUrl}/${method}`;
-    const resp = await fetch(url, {
-      method: 'POST',
-      body: form,
-    });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TelegramClient.FILE_API_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        body: form,
+        signal: ctrl.signal,
+      });
+    } catch (err) {
+      if (ctrl.signal.aborted) {
+        throw new Error(`[Telegram] ${method} timeout after ${TelegramClient.FILE_API_TIMEOUT_MS}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     const json = (await resp.json()) as TelegramApiResponse<T>;
     if (!resp.ok || !json.ok) {
       throw new Error(`[Telegram] ${method} failed: ${json.description || resp.statusText}`);

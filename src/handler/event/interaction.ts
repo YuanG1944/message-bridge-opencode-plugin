@@ -25,6 +25,19 @@ const recentPermissionPromptBySession = new LRUCache<string, { at: number; signa
   ttl: PERMISSION_PROMPT_DEDUPE_WINDOW_MS * 4,
 });
 
+function clipDebugText(input: string, limit = 2200): string {
+  if (input.length <= limit) return input;
+  return `${input.slice(0, limit)}...(truncated len=${input.length})`;
+}
+
+function toDebugJson(value: unknown, limit = 2200): string {
+  try {
+    return clipDebugText(JSON.stringify(value), limit);
+  } catch {
+    return clipDebugText(String(value), limit);
+  }
+}
+
 function getCacheKeyBySession(
   sessionId: string,
   deps: EventFlowDeps
@@ -122,6 +135,27 @@ function permissionSignature(input: {
   return [input.type || '', input.title || '', patternText, input.callID || ''].join('::');
 }
 
+function questionPayloadScore(payload: NormalizedQuestionPayload): number {
+  return payload.questions.reduce((sum, q) => {
+    const optionScore = q.options.length * 10;
+    const textScore = q.question ? 1 : 0;
+    return sum + optionScore + textScore;
+  }, 0);
+}
+
+function permissionInfoScore(input: {
+  type?: string;
+  title?: string;
+  pattern?: string | Array<string>;
+}): number {
+  const patternCount = Array.isArray(input.pattern)
+    ? input.pattern.filter(Boolean).length
+    : input.pattern
+      ? 1
+      : 0;
+  return (input.type ? 1 : 0) + (input.title ? 2 : 0) + patternCount * 3;
+}
+
 async function armPendingQuestionPrompt(params: {
   sessionId: string;
   messageId: string;
@@ -137,7 +171,17 @@ async function armPendingQuestionPrompt(params: {
 
   if (deps.isQuestionCallHandled(cacheKey, messageId, callID)) return false;
   const existing = deps.chatPendingQuestion.get(cacheKey);
-  if (existing && existing.callID === callID && existing.messageId === messageId) return true;
+  if (existing && existing.callID === callID && existing.messageId === messageId) {
+    const prevScore = questionPayloadScore(existing.payload);
+    const nextScore = questionPayloadScore(payload);
+    if (nextScore <= prevScore) return true;
+
+    // Replace fallback/partial payload when a richer one arrives for the same call.
+    clearPendingQuestionForChat(deps, cacheKey);
+    bridgeLogger.info(
+      `[QuestionFlow] pending-updated sid=${sessionId} mid=${messageId} call=${callID} prevScore=${prevScore} nextScore=${nextScore}`,
+    );
+  }
 
   clearPendingQuestionForChat(deps, cacheKey);
   const pending: PendingQuestionState = {
@@ -152,6 +196,11 @@ async function armPendingQuestionPrompt(params: {
     dueAt: Date.now() + QUESTION_TIMEOUT_MS,
   };
   deps.chatPendingQuestion.set(cacheKey, pending);
+  bridgeLogger.info(
+    `[QuestionFlow] pending-set sid=${sessionId} mid=${messageId} call=${callID} count=${payload.questions.length} shape=${payload.questions
+      .map(q => `${q.id}:${q.freeText ? 'text' : 'option'}:${q.options.length}`)
+      .join('|')}`,
+  );
 
   const adapter = mux.get(adapterKey);
   if (adapter) {
@@ -185,17 +234,46 @@ export async function captureQuestionProxyIfNeeded(params: {
   const { part, sessionId, messageId, mux, deps } = params;
   if (!isQuestionToolPart(part)) return false;
 
+  const state = (part?.state || {}) as Record<string, unknown>;
+  const stateInput = state.input as Record<string, unknown> | undefined;
+  const stateOutput = state.output as Record<string, unknown> | undefined;
+  const stateResult = state.result as Record<string, unknown> | undefined;
+  const stateArgs = state.arguments as Record<string, unknown> | undefined;
+  bridgeLogger.info(
+    `[QuestionFlowDebug] question.tool.raw sid=${sessionId} mid=${messageId} callID=${part.callID || '-'} tool=${part.tool || '-'} stateKeys=${Object.keys(state).join(',') || '-'} input=${toDebugJson(
+      state.input,
+    )} output=${toDebugJson(state.output)} result=${toDebugJson(state.result)} arguments=${toDebugJson(
+      state.arguments,
+    )}`,
+  );
   const payloadMaybe =
-    extractQuestionPayload(part?.state?.input) ||
-    extractQuestionPayload((part?.state?.input as Record<string, unknown> | undefined)?.questions) ||
-    extractQuestionPayload((part?.state?.input as Record<string, unknown> | undefined)?.question);
+    extractQuestionPayload(state.input) ||
+    extractQuestionPayload(state.output) ||
+    extractQuestionPayload(state.result) ||
+    extractQuestionPayload(state.arguments) ||
+    extractQuestionPayload((stateInput || {}).questions) ||
+    extractQuestionPayload((stateInput || {}).question) ||
+    extractQuestionPayload((stateOutput || {}).questions) ||
+    extractQuestionPayload((stateOutput || {}).question) ||
+    extractQuestionPayload((stateResult || {}).questions) ||
+    extractQuestionPayload((stateResult || {}).question) ||
+    extractQuestionPayload((stateArgs || {}).questions) ||
+    extractQuestionPayload((stateArgs || {}).question);
+  bridgeLogger.info(
+    `[QuestionFlowDebug] question.tool.normalized sid=${sessionId} mid=${messageId} callID=${part.callID || '-'} parsed=${toDebugJson(
+      payloadMaybe,
+    )}`,
+  );
   const fallbackPayload =
     payloadMaybe ||
     extractQuestionPayload([
       {
         id: part.callID || `q-${messageId}`,
         question:
-          readStringField((part?.state?.input as Record<string, unknown> | undefined) || {}, 'question', 'prompt', 'title', 'text') ||
+          readStringField(stateInput || {}, 'question', 'prompt', 'title', 'text') ||
+          readStringField(stateOutput || {}, 'question', 'prompt', 'title', 'text') ||
+          readStringField(stateResult || {}, 'question', 'prompt', 'title', 'text') ||
+          readStringField(stateArgs || {}, 'question', 'prompt', 'title', 'text') ||
           '检测到网页侧需要额外输入，请直接回复要填写的内容。',
         freeText: true,
       },
@@ -223,6 +301,11 @@ export async function handleQuestionAskedEvent(
   deps: EventFlowDeps
 ): Promise<void> {
   const props = (event.properties || {}) as Record<string, unknown>;
+  bridgeLogger.info(
+    `[QuestionFlowDebug] question.asked.raw keys=${Object.keys(props).join(',') || '-'} payload=${toDebugJson(
+      props,
+    )}`,
+  );
   const sessionId = readStringField(props, 'sessionID', 'sessionId');
   if (!sessionId) return;
   hydrateSessionRouteFromEventProps(sessionId, props, deps);
@@ -409,16 +492,32 @@ export async function handlePermissionUpdatedEvent(
     existingPending.mode === 'permission_request' &&
     existingPending.sessionId === sessionId
   ) {
+    const prevScore = permissionInfoScore({
+      type: existingPending.permissionType,
+      title: existingPending.permissionTitle,
+      pattern: existingPending.permissionPattern,
+    });
+    const nextScore = permissionInfoScore({
+      type: permissionType,
+      title: permissionTitle,
+      pattern: permissionPattern as string | Array<string> | undefined,
+    });
     existingPending.permissionID = permissionID;
     existingPending.permissionType = permissionType;
     existingPending.permissionTitle = permissionTitle;
     existingPending.permissionPattern = permissionPattern as string | Array<string> | undefined;
     existingPending.blockedReason = permissionTitle;
     deps.chatPendingAuthorization.set(cacheKey, existingPending);
-    bridgeLogger.debug(
-      `[BridgePermission] update pending without re-prompt sid=${sessionId} permissionID=${permissionID}`
-    );
-    return;
+    if (nextScore > prevScore) {
+      bridgeLogger.info(
+        `[BridgePermission] pending-updated sid=${sessionId} permissionID=${permissionID} prevScore=${prevScore} nextScore=${nextScore}`,
+      );
+    } else {
+      bridgeLogger.debug(
+        `[BridgePermission] update pending without re-prompt sid=${sessionId} permissionID=${permissionID}`
+      );
+      return;
+    }
   }
 
   const sig = permissionSignature({

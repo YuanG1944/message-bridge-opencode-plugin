@@ -35,6 +35,7 @@ const chatHandledQuestionCalls = new LRUCache<string, Set<string>>({
 });
 const chatPendingAuthorization = new Map<string, PendingAuthorizationState>();
 const pendingAuthorizationTimers = new Map<string, NodeJS.Timeout>();
+const sessionReplyWatchdogTimers = new Map<string, NodeJS.Timeout>();
 globalState.__bridge_max_file_size = chatMaxFileSizeMb;
 globalState.__bridge_max_file_retry = chatMaxFileRetry;
 
@@ -127,6 +128,7 @@ export async function startGlobalEventListener(api: OpencodeClient, mux: Adapter
     chatPendingAuthorization,
     pendingQuestionTimers,
     pendingAuthorizationTimers,
+    sessionReplyWatchdogTimers,
     isQuestionCallHandled,
     markQuestionCallHandled,
   });
@@ -153,6 +155,7 @@ export function stopGlobalEventListener() {
     chatPendingAuthorization,
     pendingQuestionTimers,
     pendingAuthorizationTimers,
+    sessionReplyWatchdogTimers,
     isQuestionCallHandled,
     markQuestionCallHandled,
   });
@@ -173,6 +176,8 @@ export const createIncomingHandler = (api: OpencodeClient, mux: AdapterMux, adap
     chatPendingQuestion,
     chatPendingAuthorization,
     pendingAuthorizationTimers,
+    sessionReplyWatchdogTimers,
+    sessionActiveMsg,
     clearPendingQuestionForChat,
     clearPendingAuthorizationForChat,
     clearAllPendingAuthorizations,

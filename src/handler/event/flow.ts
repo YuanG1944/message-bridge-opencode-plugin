@@ -8,6 +8,7 @@ import {
   resetEventDispatchState,
 } from './dispatch';
 import { summarizeObservedEvent, unwrapObservedEvent } from './utils';
+import * as fs from 'node:fs';
 
 export type { EventFlowDeps } from './types';
 
@@ -27,6 +28,36 @@ export async function startGlobalEventListenerWithDeps(
 
   let retryCount = 0;
   let globalRetryCount = 0;
+  const degradedRaw = Number(process.env.BRIDGE_MAIN_EVENT_DEGRADED_MS);
+  const mainDegradedThresholdMs =
+    Number.isFinite(degradedRaw) && degradedRaw > 0 ? degradedRaw : 30_000;
+  let lastMainRichEventAt = Date.now();
+  let globalFallbackAnnounced = false;
+  const currentDir = process.cwd();
+  const currentDirReal = (() => {
+    try {
+      return fs.realpathSync(currentDir);
+    } catch {
+      return currentDir;
+    }
+  })();
+
+  const normalizeDir = (dir: string): string => {
+    try {
+      return fs.realpathSync(dir);
+    } catch {
+      return dir;
+    }
+  };
+
+  const isSameProjectDir = (dir?: string): boolean => {
+    if (!dir) return true;
+    const normalized = normalizeDir(dir);
+    if (normalized === currentDirReal) return true;
+    // Fallback comparison when one side contains symlinked segments.
+    return normalized === currentDir || dir === currentDir || dir === currentDirReal;
+  };
+
   const GLOBAL_FORWARD_EVENT_TYPES = new Set<string>([
     'permission.updated',
     'permission.asked',
@@ -48,6 +79,10 @@ export async function startGlobalEventListenerWithDeps(
         if (!e) {
           bridgeLogger.debug('[BridgeFlow] event.observed.unparsed', event);
           continue;
+        }
+        if (e.type !== 'server.heartbeat' && e.type !== 'server.connected') {
+          lastMainRichEventAt = Date.now();
+          globalFallbackAnnounced = false;
         }
         bridgeLogger.info('[BridgeFlow] event.observed', summarizeObservedEvent(e));
         await dispatchEventByType(e, api, mux, deps);
@@ -74,10 +109,27 @@ export async function startGlobalEventListenerWithDeps(
       globalRetryCount = 0;
 
       for await (const event of events.stream) {
+        const directory =
+          event && typeof event === 'object' && typeof (event as { directory?: unknown }).directory === 'string'
+            ? ((event as { directory?: string }).directory as string)
+            : undefined;
+        if (!isSameProjectDir(directory)) continue;
+
         const e = unwrapObservedEvent(event);
         if (deps.listenerState.shouldStopListener) break;
         if (!e) continue;
-        if (!GLOBAL_FORWARD_EVENT_TYPES.has(e.type)) continue;
+
+        let shouldForward = GLOBAL_FORWARD_EVENT_TYPES.has(e.type);
+        if (!shouldForward && e.type !== 'server.heartbeat' && e.type !== 'server.connected') {
+          shouldForward = Date.now() - lastMainRichEventAt >= mainDegradedThresholdMs;
+          if (shouldForward && !globalFallbackAnnounced) {
+            bridgeLogger.warn(
+              `[Listener] main event stream appears degraded; enabling global fallback after ${mainDegradedThresholdMs}ms of heartbeat-only traffic`
+            );
+            globalFallbackAnnounced = true;
+          }
+        }
+        if (!shouldForward) continue;
         await dispatchEventByType(e, api, mux, deps);
       }
     } catch (e) {

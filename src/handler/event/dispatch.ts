@@ -249,6 +249,14 @@ function resolveSessionTarget(sessionId: string, mux: AdapterMux, deps: EventFlo
   return { ctx, adapter };
 }
 
+function clearReplyWatchdog(deps: EventFlowDeps, sessionId: string, reason: string): void {
+  const timer = deps.sessionReplyWatchdogTimers.get(sessionId);
+  if (!timer) return;
+  clearTimeout(timer);
+  deps.sessionReplyWatchdogTimers.delete(sessionId);
+  bridgeLogger.debug(`[Monitor] session-reply-watchdog-cleared sid=${sessionId} reason=${reason}`);
+}
+
 async function handleMessageUpdatedEvent(
   event: EventMessageUpdated,
   mux: AdapterMux,
@@ -261,6 +269,7 @@ async function handleMessageUpdatedEvent(
 
   const sid = info.sessionID as string;
   const mid = info.id as string;
+  clearReplyWatchdog(deps, sid, 'message.updated');
 
   const target = resolveSessionTarget(sid, mux, deps);
   if (!target) {
@@ -321,6 +330,7 @@ async function handleMessagePartUpdatedEvent(
   const sessionId = part.sessionID;
   const messageId = part.messageID;
   if (!sessionId || !messageId) return;
+  clearReplyWatchdog(deps, sessionId, 'message.part.updated');
 
   const partType = (part as { type?: unknown }).type;
   if (typeof partType === 'string' && !KNOWN_PART_TYPES.has(partType)) {
@@ -492,6 +502,7 @@ async function handleSessionErrorEvent(
   const sid = event.properties.sessionID;
   const err = event.properties.error;
   if (!sid) return;
+  clearReplyWatchdog(deps, sid, 'session.error');
 
   const target = resolveSessionTarget(sid, mux, deps);
   if (!target) {
@@ -527,6 +538,7 @@ async function handleSessionIdleEvent(
 ) {
   const sid = event.properties.sessionID;
   if (!sid) return;
+  clearReplyWatchdog(deps, sid, 'session.idle');
 
   const target = resolveSessionTarget(sid, mux, deps);
   if (!target) {
@@ -702,6 +714,10 @@ export function resetEventDispatchState(deps: EventFlowDeps) {
   deps.chatAwaitingSaveFile.clear();
   deps.chatMaxFileSizeMb.clear();
   deps.chatMaxFileRetry.clear();
+  for (const timer of deps.sessionReplyWatchdogTimers.values()) {
+    clearTimeout(timer);
+  }
+  deps.sessionReplyWatchdogTimers.clear();
 
   clearAllPendingQuestions(deps);
   clearAllPendingAuthorizations(deps);
