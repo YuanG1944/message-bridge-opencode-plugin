@@ -117,6 +117,8 @@ export type IncomingFlowDeps = {
   chatPendingQuestion: Map<string, PendingQuestionState>;
   chatPendingAuthorization: Map<string, PendingAuthorizationState>;
   pendingAuthorizationTimers: Map<string, NodeJS.Timeout>;
+  sessionReplyWatchdogTimers: Map<string, NodeJS.Timeout>;
+  sessionActiveMsg: Map<string, string>;
   clearPendingQuestionForChat: (cacheKey: string) => void;
   clearPendingAuthorizationForChat: (cacheKey: string) => void;
   clearAllPendingAuthorizations: () => void;
@@ -231,6 +233,86 @@ export const createIncomingHandlerWithDeps = (
             ...(model ? { model: { providerID: model.providerID, modelID: model.modelID } } : {}),
           },
         });
+      };
+
+      const armSessionReplyWatchdog = (sessionId: string) => {
+        const existing = deps.sessionReplyWatchdogTimers.get(sessionId);
+        if (existing) {
+          clearTimeout(existing);
+          deps.sessionReplyWatchdogTimers.delete(sessionId);
+        }
+        const timeoutRaw = Number(process.env.BRIDGE_REPLY_WATCHDOG_MS);
+        const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 20000;
+        const startedAt = Date.now();
+        const timer = setTimeout(async () => {
+          deps.sessionReplyWatchdogTimers.delete(sessionId);
+          if (deps.sessionActiveMsg.get(sessionId)) return;
+
+          let statusType = 'unknown';
+          let statusDetail = '-';
+          try {
+            const statusRes = await api.session.status();
+            const statusObj = toApiRecord(statusRes);
+            const sessionStatus = statusObj ? toApiRecord(statusObj[sessionId]) : null;
+            const t = sessionStatus ? readString(sessionStatus, 'type') : undefined;
+            if (t) statusType = t;
+            const message = sessionStatus ? readString(sessionStatus, 'message') : undefined;
+            if (message) statusDetail = message;
+          } catch (err) {
+            statusDetail = `status-query-failed:${extractErrorMessage(err) || 'unknown'}`;
+          }
+
+          let recentSummary = 'n/a';
+          let replayText = '';
+          try {
+            const listRes = await api.session.messages({ path: { id: sessionId }, query: { limit: 2 } });
+            const list = toApiArray(listRes);
+            const compact = list
+              .map(item => {
+                const row = toApiRecord(item);
+                const info = row ? toApiRecord(row.info) : null;
+                const id = info ? readString(info, 'id') : undefined;
+                const role = info ? readString(info, 'role') : undefined;
+                return `${id || '-'}:${role || '-'}`;
+              })
+              .filter(Boolean)
+              .join(',');
+            if (compact) recentSummary = compact;
+
+            const latestAssistant = [...list]
+              .reverse()
+              .find(item => readString(toApiRecord(toApiRecord(item)?.info), 'role') === 'assistant');
+            const latestAssistantRow = latestAssistant ? toApiRecord(latestAssistant) : null;
+            const parts = latestAssistantRow ? toApiArray(latestAssistantRow.parts) : [];
+            replayText = parts
+              .map(part => {
+                const p = toApiRecord(part);
+                if (!p) return '';
+                if (readString(p, 'type') !== 'text') return '';
+                return readString(p, 'text') || '';
+              })
+              .filter(Boolean)
+              .join('\n')
+              .trim();
+          } catch {}
+
+          bridgeLogger.warn(
+            `[Monitor] session-reply-timeout sid=${sessionId} adapter=${adapterKey} chat=${chatId} inboundMsg=${messageId || '-'} waitMs=${Date.now() - startedAt} status=${statusType} detail=${statusDetail} recent=${recentSummary}`,
+          );
+          if (replayText) {
+            const clipped = replayText.length > 3500 ? `${replayText.slice(0, 3500)}\n\n...(truncated)` : replayText;
+            await adapter
+              .sendMessage(
+                chatId,
+                `## Status\n⚠️ 事件流异常，已从会话回放最近回复：\n\n${clipped}`,
+              )
+              .catch(() => {});
+            bridgeLogger.info(
+              `[Monitor] session-reply-replayed sid=${sessionId} adapter=${adapterKey} chat=${chatId} len=${clipped.length}`,
+            );
+          }
+        }, timeoutMs);
+        deps.sessionReplyWatchdogTimers.set(sessionId, timer);
       };
 
       const abortSessionBestEffort = async (sessionId: string) => {
@@ -722,6 +804,7 @@ export const createIncomingHandlerWithDeps = (
         return;
       }
       bridgeLogger.info(`[Incoming] prompt-sent adapter=${adapterKey} session=${sessionId}`);
+      armSessionReplyWatchdog(sessionId);
     } catch (err: unknown) {
       bridgeLogger.error(`[Incoming] adapter=${adapterKey} chat=${chatId} failed`, err);
       await adapter.sendMessage(chatId, `${ERROR_HEADER}\n${deps.formatUserError(err)}`);

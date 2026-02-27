@@ -18,6 +18,24 @@ import { parseFeishuConfig } from './index.feishu';
 import { parseTelegramConfig } from './index.telegram';
 import { parseQQConfig } from './index.qq';
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+    promise.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      err => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export const BridgePlugin: Plugin = async ctx => {
   const { client } = ctx;
   bridgeLogger.info(
@@ -91,6 +109,9 @@ export const BridgePlugin: Plugin = async ctx => {
       setBridgeFileStoreDir(uniqueStoreDirs[0]);
 
       // 注册 + start（incoming）
+      const startTimeoutMsRaw = Number(process.env.BRIDGE_ADAPTER_START_TIMEOUT_MS);
+      const startTimeoutMs =
+        Number.isFinite(startTimeoutMsRaw) && startTimeoutMsRaw > 0 ? startTimeoutMsRaw : 45000;
       for (const { key, create } of adaptersToStart) {
         const adapter = adapterInstances.get(key) || create();
         adapterInstances.set(key, adapter);
@@ -106,7 +127,11 @@ export const BridgePlugin: Plugin = async ctx => {
         startingAdapters.add(key);
         const incoming = createIncomingHandler(client, mux, key);
         try {
-          await adapter.start(incoming);
+          await withTimeout(
+            adapter.start(incoming),
+            startTimeoutMs,
+            `[Plugin] start adapter=${key}`,
+          );
           startedAdapters.add(key);
           bridgeLogger.info(`[Plugin] started adapter=${key}`);
         } finally {
