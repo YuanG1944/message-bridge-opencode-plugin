@@ -4,6 +4,7 @@ import type {
   EventPermissionReplied,
   EventPermissionUpdated,
   EventMessageUpdated,
+  Part,
   EventSessionError,
   EventSessionIdle,
   OpencodeClient
@@ -249,6 +250,63 @@ function resolveSessionTarget(sessionId: string, mux: AdapterMux, deps: EventFlo
   return { ctx, adapter };
 }
 
+function buildSyntheticDeltaPart(
+  sessionId: string,
+  messageId: string,
+  partId: string,
+  field?: string,
+  snapshot?: Part
+): Part | null {
+  if (snapshot) return snapshot;
+  if (field !== 'text') return null;
+
+  return {
+    id: partId,
+    sessionID: sessionId,
+    messageID: messageId,
+    type: 'text',
+    text: '',
+  } as Part;
+}
+
+async function switchAssistantMessageIfNeeded(
+  sessionId: string,
+  messageId: string,
+  ctx: { chatId: string },
+  adapter: BridgeAdapter,
+  deps: EventFlowDeps
+) {
+  const prev = deps.sessionActiveMsg.get(sessionId);
+  if (prev && prev !== messageId) {
+    const prevBuf = deps.msgBuffers.get(prev);
+    const nextBuf = getOrInitBuffer(deps.msgBuffers, messageId);
+    if (prevBuf && shouldCarryPlatformMessageAcrossAssistantMessages(prevBuf)) {
+      carryPlatformMessage(prevBuf, nextBuf);
+      bridgeLogger.info(`${FLOW_LOG_PREFIX} carry-execution sid=${sessionId} prev=${prev} next=${messageId}`);
+    } else {
+      bridgeLogger.debug(
+        `[BridgeFlowDebug] do-not-carry sid=${sessionId} prev=${prev} next=${messageId} prevPlatform=${
+          prevBuf?.platformMsgId || '-'
+        } prevTextLen=${(prevBuf?.text || '').length} prevReasoningLen=${
+          (prevBuf?.reasoning || '').length
+        } prevTools=${prevBuf?.tools?.size || 0}`
+      );
+      markStatus(deps.msgBuffers, prev, 'done');
+      await flushMessage(adapter, ctx.chatId, prev, deps.msgBuffers, true);
+      pruneMessageBuffers(deps);
+    }
+  }
+  deps.sessionActiveMsg.set(sessionId, messageId);
+}
+
+function removePartSnapshotsForMessage(messageId: string, deps: EventFlowDeps) {
+  for (const [partId, part] of deps.partSnapshots.entries()) {
+    if (part.messageID === messageId) {
+      deps.partSnapshots.delete(partId);
+    }
+  }
+}
+
 function clearReplyWatchdog(deps: EventFlowDeps, sessionId: string, reason: string): void {
   const timer = deps.sessionReplyWatchdogTimers.get(sessionId);
   if (!timer) return;
@@ -331,6 +389,9 @@ async function handleMessagePartUpdatedEvent(
   const messageId = part.messageID;
   if (!sessionId || !messageId) return;
   clearReplyWatchdog(deps, sessionId, 'message.part.updated');
+  if (part.id) {
+    deps.partSnapshots.set(part.id, part);
+  }
 
   const partType = (part as { type?: unknown }).type;
   if (typeof partType === 'string' && !KNOWN_PART_TYPES.has(partType)) {
@@ -375,29 +436,7 @@ async function handleMessagePartUpdatedEvent(
   const adapterKey = deps.sessionToAdapterKey.get(sessionId);
   const cacheKey = adapterKey ? `${adapterKey}:${ctx.chatId}` : '';
 
-  const prev = deps.sessionActiveMsg.get(sessionId);
-  if (prev && prev !== messageId) {
-    const prevBuf = deps.msgBuffers.get(prev);
-    const nextBuf = getOrInitBuffer(deps.msgBuffers, messageId);
-    if (prevBuf && shouldCarryPlatformMessageAcrossAssistantMessages(prevBuf)) {
-      carryPlatformMessage(prevBuf, nextBuf);
-      bridgeLogger.info(
-        `${FLOW_LOG_PREFIX} carry-execution sid=${sessionId} prev=${prev} next=${messageId}`
-      );
-    } else {
-      bridgeLogger.debug(
-        `[BridgeFlowDebug] do-not-carry sid=${sessionId} prev=${prev} next=${messageId} prevPlatform=${
-          prevBuf?.platformMsgId || '-'
-        } prevTextLen=${(prevBuf?.text || '').length} prevReasoningLen=${
-          (prevBuf?.reasoning || '').length
-        } prevTools=${prevBuf?.tools?.size || 0}`
-      );
-      markStatus(deps.msgBuffers, prev, 'done');
-      await flushMessage(adapter, ctx.chatId, prev, deps.msgBuffers, true);
-      pruneMessageBuffers(deps);
-    }
-  }
-  deps.sessionActiveMsg.set(sessionId, messageId);
+  await switchAssistantMessageIfNeeded(sessionId, messageId, ctx, adapter, deps);
 
   const buffer = getOrInitBuffer(deps.msgBuffers, messageId);
   if (cacheKey) {
@@ -494,6 +533,101 @@ async function handleMessagePartUpdatedEvent(
   }
 }
 
+async function handleMessagePartDeltaEvent(
+  event: EventWithType,
+  mux: AdapterMux,
+  deps: EventFlowDeps
+) {
+  const props = (event.properties || {}) as Record<string, unknown>;
+  const sessionId = readStringField(props, 'sessionID', 'sessionId');
+  const messageId = readStringField(props, 'messageID', 'messageId');
+  const partId = readStringField(props, 'partID', 'partId');
+  const field = readStringField(props, 'field');
+  const delta = readStringField(props, 'delta');
+  if (!sessionId || !messageId || !partId || !delta) return;
+
+  clearReplyWatchdog(deps, sessionId, 'message.part.delta');
+
+  const target = resolveSessionTarget(sessionId, mux, deps);
+  if (!target) {
+    warnRouteMissOnce('message.part.delta', sessionId, messageId);
+    return;
+  }
+  const { ctx, adapter } = target;
+
+  if (deps.msgRole.get(messageId) === 'user') return;
+
+  const snapshot = deps.partSnapshots.get(partId);
+  const part = buildSyntheticDeltaPart(sessionId, messageId, partId, field, snapshot);
+  if (!part) {
+    bridgeLogger.debug(
+      `[BridgeFlowDebug] skip-delta sid=${sessionId} mid=${messageId} pid=${partId} field=${field || '-'} reason=no-part-snapshot`
+    );
+    return;
+  }
+
+  await switchAssistantMessageIfNeeded(sessionId, messageId, ctx, adapter, deps);
+
+  const adapterKey = deps.sessionToAdapterKey.get(sessionId);
+  const cacheKey = adapterKey ? `${adapterKey}:${ctx.chatId}` : '';
+  const buffer = getOrInitBuffer(deps.msgBuffers, messageId);
+  if (cacheKey) {
+    const selectedAgent = deps.chatAgent.get(cacheKey);
+    const selectedModel = deps.chatModel.get(cacheKey);
+    buffer.selectedAgent = selectedAgent;
+    buffer.selectedModel = selectedModel;
+  }
+
+  applyPartToBuffer(buffer, part, delta);
+
+  bridgeLogger.debug(
+    `[BridgeFlowDebug] delta-applied sid=${sessionId} mid=${messageId} pid=${partId} field=${
+      field || '-'
+    } deltaLen=${delta.length} textLen=${buffer.text.length} reasoningLen=${buffer.reasoning.length}`
+  );
+
+  if (!shouldFlushNow(buffer, adapterKey || undefined)) {
+    bridgeLogger.debug(
+      `[BridgeFlowDebug] skip-flush sid=${sessionId} mid=${messageId} reason=throttle-delta`
+    );
+    return;
+  }
+
+  const hasAny = buffer.reasoning.length > 0 || buffer.text.length > 0 || buffer.tools.size > 0;
+  if (!hasAny) {
+    bridgeLogger.debug(
+      `[BridgeFlowDebug] skip-flush sid=${sessionId} mid=${messageId} reason=empty-delta`
+    );
+    return;
+  }
+
+  buffer.lastUpdateTime = Date.now();
+  const display = buildPlatformDisplay(buffer);
+  const hash = simpleHash(display);
+  if (buffer.platformMsgId && hash === buffer.lastDisplayHash) {
+    bridgeLogger.debug(
+      `[BridgeFlowDebug] skip-flush sid=${sessionId} mid=${messageId} reason=same-hash-delta`
+    );
+    return;
+  }
+
+  if (!buffer.platformMsgId) {
+    bridgeLogger.info(`${FLOW_LOG_PREFIX} send-new sid=${sessionId} mid=${messageId} tools=${buffer.tools.size}`);
+    const sent = await adapter.sendMessage(ctx.chatId, display);
+    if (sent) {
+      buffer.platformMsgId = sent;
+      buffer.lastDisplayHash = hash;
+    }
+    return;
+  }
+
+  const ok = await safeEditWithRetry(adapter, ctx.chatId, buffer.platformMsgId, display);
+  if (ok) {
+    buffer.platformMsgId = ok;
+    buffer.lastDisplayHash = hash;
+  }
+}
+
 async function handleSessionErrorEvent(
   event: EventSessionError,
   mux: AdapterMux,
@@ -572,6 +706,7 @@ function handleMessageRemovedEvent(event: EventWithType, deps: EventFlowDeps) {
   const sessionID = readStringField(props, 'sessionID');
   const messageID = readStringField(props, 'messageID');
   if (!sessionID || !messageID) return;
+  removePartSnapshotsForMessage(messageID, deps);
   deps.msgBuffers.delete(messageID);
   deps.msgRole.delete(messageID);
   if (deps.sessionActiveMsg.get(sessionID) === messageID) {
@@ -580,12 +715,13 @@ function handleMessageRemovedEvent(event: EventWithType, deps: EventFlowDeps) {
   bridgeLogger.debug(`[BridgeFlow] message.removed sid=${sessionID} mid=${messageID}`);
 }
 
-function handleMessagePartRemovedEvent(event: EventWithType) {
+function handleMessagePartRemovedEvent(event: EventWithType, deps: EventFlowDeps) {
   const props = (event.properties || {}) as Record<string, unknown>;
   const sessionID = readStringField(props, 'sessionID');
   const messageID = readStringField(props, 'messageID');
   const partID = readStringField(props, 'partID');
   if (!sessionID || !messageID || !partID) return;
+  deps.partSnapshots.delete(partID);
   bridgeLogger.debug(`[BridgeFlow] message.part.removed sid=${sessionID} mid=${messageID} pid=${partID}`);
 }
 
@@ -637,6 +773,11 @@ export async function dispatchEventByType(
     return;
   }
 
+  if (e.type === 'message.part.delta') {
+    await handleMessagePartDeltaEvent(e, mux, deps);
+    return;
+  }
+
   if (e.type === 'session.error') {
     await handleSessionErrorEvent(e as EventSessionError, mux, deps);
     return;
@@ -668,7 +809,7 @@ export async function dispatchEventByType(
   }
 
   if (e.type === 'message.part.removed') {
-    handleMessagePartRemovedEvent(e);
+    handleMessagePartRemovedEvent(e, deps);
     return;
   }
 
@@ -705,6 +846,7 @@ export function resetEventDispatchState(deps: EventFlowDeps) {
   deps.sessionActiveMsg.clear();
   deps.msgRole.clear();
   deps.msgBuffers.clear();
+  deps.partSnapshots.clear();
   deps.sessionCache.clear();
   deps.sessionToAdapterKey.clear();
   deps.chatAgent.clear();
