@@ -1,5 +1,6 @@
 // index.ts
 import type { Plugin } from '@opencode-ai/plugin';
+import { createOpencodeClient } from '@opencode-ai/sdk';
 
 import { globalState, isEnabled, runtimeInstanceId } from './src/utils';
 import { AGENT_LARK, AGENT_IMESSAGE, AGENT_TELEGRAM, AGENT_QQ } from './src/constants';
@@ -37,10 +38,16 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 }
 
 export const BridgePlugin: Plugin = async ctx => {
-  const { client } = ctx;
+  const { client, serverUrl, directory } = ctx;
   bridgeLogger.info(
-    `[Plugin] bridge entry initializing logFile=${getBridgeLogFilePath()} pid=${process.pid} instance=${runtimeInstanceId}`,
+    `[Plugin] bridge entry initializing logFile=${getBridgeLogFilePath()} pid=${process.pid} instance=${runtimeInstanceId} server=${serverUrl}`,
   );
+
+  // Create an independent client for SSE to avoid potential plugin-context stream issues
+  const sseClient = createOpencodeClient({
+    baseUrl: serverUrl.toString(),
+    directory: directory,
+  });
 
   const bootstrap = async () => {
     try {
@@ -142,7 +149,7 @@ export const BridgePlugin: Plugin = async ctx => {
       // 全局 listener 只启动一次（mux）
       if (!globalState.__bridge_listener_started) {
         globalState.__bridge_listener_started = true;
-        startGlobalEventListener(client, mux).catch(err => {
+        startGlobalEventListener(sseClient, mux).catch(err => {
           bridgeLogger.error('[Plugin] startGlobalEventListener failed', err);
           globalState.__bridge_listener_started = false;
         });

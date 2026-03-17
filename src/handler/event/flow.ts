@@ -68,14 +68,33 @@ export async function startGlobalEventListenerWithDeps(
   ]);
 
   const connect = async () => {
+    let streamWatchdog: NodeJS.Timeout | undefined;
+    const resetWatchdog = () => {
+      if (streamWatchdog) clearTimeout(streamWatchdog);
+      streamWatchdog = setTimeout(() => {
+        bridgeLogger.warn('[Listener] no events received for 60s, reconnecting...');
+        deps.listenerState.shouldStopListener = true; // Trigger break in loop
+      }, 60000);
+    };
+
     try {
-      const events = await api.event.subscribe();
-      bridgeLogger.info('[Listener] connected to OpenCode event stream');
+      // Explicitly pass directory to ensure we get events for the current project
+      const events = await api.event.subscribe({ query: { directory: currentDirReal } });
+      bridgeLogger.info(`[Listener] connected to OpenCode event stream (dir=${currentDirReal})`);
       retryCount = 0;
+      resetWatchdog();
 
       for await (const event of events.stream) {
+        resetWatchdog();
+        // Log raw event type if possible for deep diagnosis
+        const rawType = (event as any)?.type || (event as any)?.payload?.type || 'unknown';
+        bridgeLogger.debug(`[BridgeFlowDebug] raw event received type=${rawType}`);
+
         const e = unwrapObservedEvent(event);
-        if (deps.listenerState.shouldStopListener) break;
+        if (deps.listenerState.shouldStopListener) {
+          deps.listenerState.shouldStopListener = false; // Reset for next connect
+          break;
+        }
         if (!e) {
           bridgeLogger.debug('[BridgeFlow] event.observed.unparsed', event);
           continue;
@@ -89,7 +108,9 @@ export async function startGlobalEventListenerWithDeps(
       }
 
       await flushAllEvents(mux, deps);
+      if (streamWatchdog) clearTimeout(streamWatchdog);
     } catch (e) {
+      if (streamWatchdog) clearTimeout(streamWatchdog);
       if (deps.listenerState.shouldStopListener) return;
 
       bridgeLogger.error('[Listener] stream disconnected', e);
@@ -103,12 +124,26 @@ export async function startGlobalEventListenerWithDeps(
 
   const connectGlobalPermissions = async () => {
     if (!api.global?.event) return;
+    let globalStreamWatchdog: NodeJS.Timeout | undefined;
+    const resetGlobalWatchdog = () => {
+      if (globalStreamWatchdog) clearTimeout(globalStreamWatchdog);
+      globalStreamWatchdog = setTimeout(() => {
+        bridgeLogger.warn('[Listener] no global events received for 60s, reconnecting...');
+        deps.listenerState.shouldStopListener = true;
+      }, 60000);
+    };
+
     try {
       const events = await api.global.event();
       bridgeLogger.info('[Listener] connected to OpenCode global event stream');
       globalRetryCount = 0;
+      resetGlobalWatchdog();
 
       for await (const event of events.stream) {
+        resetGlobalWatchdog();
+        const rawType = (event as any)?.type || (event as any)?.payload?.type || 'unknown';
+        bridgeLogger.debug(`[BridgeFlowDebug] raw global event received type=${rawType}`);
+
         const directory =
           event && typeof event === 'object' && typeof (event as { directory?: unknown }).directory === 'string'
             ? ((event as { directory?: string }).directory as string)
@@ -132,7 +167,9 @@ export async function startGlobalEventListenerWithDeps(
         if (!shouldForward) continue;
         await dispatchEventByType(e, api, mux, deps);
       }
+      if (globalStreamWatchdog) clearTimeout(globalStreamWatchdog);
     } catch (e) {
+      if (globalStreamWatchdog) clearTimeout(globalStreamWatchdog);
       if (deps.listenerState.shouldStopListener) return;
       bridgeLogger.error('[Listener] global stream disconnected', e);
       const delay = Math.min(5000 * (globalRetryCount + 1), 60000);

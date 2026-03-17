@@ -1,3 +1,4 @@
+import type { Part } from '@opencode-ai/sdk';
 import type { MessageBuffer } from '../../bridge/buffer';
 import type { PendingAuthorizationState, PendingQuestionState } from '../proxy';
 
@@ -12,6 +13,7 @@ export type EventFlowDeps = {
   sessionActiveMsg: Map<string, string>;
   msgRole: Map<string, string>;
   msgBuffers: Map<string, EventMessageBuffer>;
+  partSnapshots: Map<string, Part>;
   sessionCache: Map<string, string>;
   sessionToAdapterKey: Map<string, string>;
   chatAgent: Map<string, string>;

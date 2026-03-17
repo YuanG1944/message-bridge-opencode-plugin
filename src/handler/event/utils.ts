@@ -11,6 +11,7 @@ export const KNOWN_EVENT_TYPES = new Set<string>([
   'message.updated',
   'message.removed',
   'message.part.updated',
+  'message.part.delta',
   'message.part.removed',
   'permission.updated',
   'permission.replied',
@@ -100,7 +101,9 @@ export function summarizeObservedEvent(event: unknown): Record<string, unknown> 
     role: readStringField(info ?? {}, 'role'),
     part_type: readStringField(part ?? {}, 'type'),
     part_id: readStringField(part ?? {}, 'id'),
+    field: readStringField(props, 'field'),
     has_delta: typeof props.delta === 'string' && props.delta.length > 0,
+    delta_len: typeof props.delta === 'string' ? props.delta.length : 0,
     has_part_metadata:
       !!part &&
       typeof (part as { metadata?: unknown }).metadata === 'object' &&

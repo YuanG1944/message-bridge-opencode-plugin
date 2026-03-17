@@ -33,12 +33,12 @@
     "tweetnacl": "^1.0.3"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "^1.1.48",
-    "@opencode-ai/sdk": "^1.1.48"
+    "@opencode-ai/plugin": "^1.2.15",
+    "@opencode-ai/sdk": "^1.2.15"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.1.48",
-    "@opencode-ai/sdk": "1.1.48",
+    "@opencode-ai/plugin": "1.2.15",
+    "@opencode-ai/sdk": "1.2.15",
     "@types/node": "^20.0.0",
     "typescript": "^5.9.3"
   }

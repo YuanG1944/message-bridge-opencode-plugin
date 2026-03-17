@@ -1,5 +1,5 @@
 // src/handler/index.ts
-import type { OpencodeClient } from '@opencode-ai/sdk';
+import type { OpencodeClient, Part } from '@opencode-ai/sdk';
 import { LRUCache } from 'lru-cache';
 import type { MessageBuffer } from '../bridge/buffer';
 import { AdapterMux } from './mux';
@@ -16,6 +16,7 @@ const sessionToCtx = new Map<string, SessionContext>(); // sessionId -> chat con
 const sessionActiveMsg = new Map<string, string>(); // sessionId -> active assistant messageID
 const msgRole = new Map<string, string>(); // messageId -> role
 const msgBuffers = new Map<string, MessageBuffer>(); // messageId -> buffer
+const partSnapshots = new Map<string, Part>(); // partId -> latest part snapshot
 const sessionCache = new Map<string, string>(); // adapterKey:chatId -> sessionId
 const sessionToAdapterKey = new Map<string, string>(); // sessionId -> adapterKey
 const chatAgent = new Map<string, string>(); // adapterKey:chatId -> agent
@@ -115,6 +116,7 @@ export async function startGlobalEventListener(api: OpencodeClient, mux: Adapter
     sessionActiveMsg,
     msgRole,
     msgBuffers,
+    partSnapshots,
     sessionCache,
     sessionToAdapterKey,
     chatAgent,
@@ -142,6 +144,7 @@ export function stopGlobalEventListener() {
     sessionActiveMsg,
     msgRole,
     msgBuffers,
+    partSnapshots,
     sessionCache,
     sessionToAdapterKey,
     chatAgent,
