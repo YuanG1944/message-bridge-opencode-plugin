@@ -169,6 +169,56 @@ function getMessageType(value: unknown): string {
   return 'text';
 }
 
+function extractPostParagraphText(nodes: unknown[]): string {
+  return nodes
+    .map(node => {
+      if (!isRecord(node)) return '';
+      const tag = typeof node.tag === 'string' ? node.tag : '';
+
+      switch (tag) {
+        case 'text':
+          return typeof node.text === 'string' ? node.text : '';
+        case 'a':
+          if (typeof node.text === 'string' && node.text) return node.text;
+          return typeof node.href === 'string' ? node.href : '';
+        case 'at':
+          return typeof node.user_name === 'string' && node.user_name ? `@${node.user_name}` : '';
+        case 'img':
+        case 'media':
+        case 'emotion':
+          return typeof node.text === 'string' ? node.text : '';
+        default:
+          if (typeof node.text === 'string') return node.text;
+          if (typeof node.href === 'string') return node.href;
+          return '';
+      }
+    })
+    .join('')
+    .trim();
+}
+
+function extractPostText(content: Record<string, unknown>): string {
+  const localized = Object.values(content).find(
+    value => isRecord(value) && (Array.isArray(value.content) || typeof value.title === 'string'),
+  ) as Record<string, unknown> | undefined;
+  const source = localized || content;
+
+  const segments: string[] = [];
+  if (typeof source.title === 'string' && source.title.trim()) {
+    segments.push(source.title.trim());
+  }
+
+  if (Array.isArray(source.content)) {
+    for (const paragraph of source.content) {
+      if (!Array.isArray(paragraph)) continue;
+      const line = extractPostParagraphText(paragraph);
+      if (line) segments.push(line);
+    }
+  }
+
+  return segments.join('\n').trim();
+}
+
 const processedMessageIds: Set<string> =
   globalState.__feishu_processed_ids || new Set<string>();
 globalState.__feishu_processed_ids = processedMessageIds;
@@ -528,6 +578,11 @@ export class FeishuClient {
     try {
       const parsed = JSON.parse(contentJson);
       const content = isRecord(parsed) ? parsed : {};
+
+      if (Array.isArray(content.content) || Object.values(content).some(value => isRecord(value) && Array.isArray(value.content))) {
+        return extractPostText(content);
+      }
+
       let text = typeof content.text === 'string' ? content.text : '';
       if (mentions && mentions.length > 0) {
         mentions.forEach(m => {
@@ -1068,11 +1123,11 @@ export class FeishuClient {
         if (this.isMessageProcessed(messageId)) return;
 
         const msgType = getMessageType(message);
-        if (msgType === 'text') {
+        if (msgType === 'text' || msgType === 'post') {
           const text = this.parseAndCleanContent(message.content, message.mentions);
           if (!text) return;
           bridgeLogger.info(
-            `[Feishu] 📥 ws text chat=${chatId} msg=${messageId} sender=${senderId} len=${text.length}`,
+            `[Feishu] 📥 ws ${msgType} chat=${chatId} msg=${messageId} sender=${senderId} len=${text.length}`,
           );
           void onMessage(chatId, text, messageId, senderId).catch(err => {
             bridgeLogger.error('[Feishu WS] ❌ Handler Error:', err);
@@ -1165,11 +1220,11 @@ export class FeishuClient {
               const mentions = Array.isArray(eventMessage?.mentions)
                 ? (eventMessage.mentions as MentionLike[])
                 : undefined;
-              if (msgType === 'text') {
+              if (msgType === 'text' || msgType === 'post') {
                 const text = this.parseAndCleanContent(content, mentions);
                 if (text) {
                   bridgeLogger.info(
-                    `[Feishu] 📥 webhook text chat=${chatId} msg=${messageId} sender=${senderId} len=${text.length}`,
+                    `[Feishu] 📥 webhook ${msgType} chat=${chatId} msg=${messageId} sender=${senderId} len=${text.length}`,
                   );
                   onMessage(chatId, text, messageId, senderId).catch(err => {
                     bridgeLogger.error('[Feishu Webhook] ❌ Handler Error:', err);
