@@ -68,7 +68,7 @@ function clearAllHandledQuestionCalls() {
 function formatUserError(err: unknown): string {
   const msg = extractErrorMessage(err) || 'unknown error';
   if (msg.toLowerCase().includes('socket connection was closed unexpectedly')) {
-    return '网络异常，资源下载失败，请稍后重试。';
+    return 'Network error: resource download failed. Please try again later.';
   }
   return msg.split('\n')[0].slice(0, 200);
 }
