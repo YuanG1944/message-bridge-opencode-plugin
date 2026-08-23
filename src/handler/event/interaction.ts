@@ -215,7 +215,7 @@ async function armPendingQuestionPrompt(params: {
     const currentAdapter = mux.get(current.adapterKey);
     if (currentAdapter) {
       await currentAdapter
-        .sendMessage(current.chatId, '## Status\n⏰ 超时，本轮提问已取消。请重新发起问题。')
+        .sendMessage(current.chatId, '## Status\n⏰ Timed out; this question was cancelled. Ask again if needed.')
         .catch(() => {});
     }
   }, QUESTION_TIMEOUT_MS);
@@ -274,7 +274,7 @@ export async function captureQuestionProxyIfNeeded(params: {
           readStringField(stateOutput || {}, 'question', 'prompt', 'title', 'text') ||
           readStringField(stateResult || {}, 'question', 'prompt', 'title', 'text') ||
           readStringField(stateArgs || {}, 'question', 'prompt', 'title', 'text') ||
-          '检测到网页侧需要额外输入，请直接回复要填写的内容。',
+          'The web UI needs additional input. Reply directly with what to enter.',
         freeText: true,
       },
     ]);
@@ -318,7 +318,7 @@ export async function handleQuestionAskedEvent(
   if (!payloadMaybe) {
     const fallbackQuestion =
       readStringField(props, 'question', 'prompt', 'title', 'text') ||
-      '检测到网页侧需要额外输入，请直接回复要填写的内容。';
+      'The web UI needs additional input. Reply directly with what to enter.';
     const fallbackPayload = extractQuestionPayload([
       {
         id: readStringField(props, 'id', 'requestID', 'callID') || `q-${Date.now()}`,
@@ -414,7 +414,7 @@ export async function handlePermissionUpdatedEvent(
     'requestId',
   );
   const permissionType = readStringField(permission, 'type', 'permission');
-  const permissionTitle = readStringField(permission, 'title') || permissionType || '权限请求';
+  const permissionTitle = readStringField(permission, 'title') || permissionType || 'Permission request';
   const permissionPattern =
     permission.pattern ??
     (Array.isArray(permission.patterns) ? permission.patterns : undefined);
@@ -449,7 +449,7 @@ export async function handlePermissionUpdatedEvent(
       chatId,
       senderId: ctx.senderId,
       sessionId,
-      blockedReason: permissionTitle || permissionType || '需要网页侧授权',
+      blockedReason: permissionTitle || permissionType || 'needs web-side authorization',
       source: 'bridge.incoming',
       createdAt: Date.now(),
       dueAt: Date.now() + AUTH_TIMEOUT_MS,
@@ -459,7 +459,7 @@ export async function handlePermissionUpdatedEvent(
       const current = deps.chatPendingAuthorization.get(cacheKey);
       if (!current || current.sessionId !== sessionId || current.mode !== 'session_blocked') return;
       clearPendingAuthorizationForChat(deps, cacheKey);
-      await adapter.sendMessage(chatId, '## Status\n⏰ 授权等待已超时。').catch(() => {});
+      await adapter.sendMessage(chatId, '## Status\n⏰ Authorization wait timed out.').catch(() => {});
     }, AUTH_TIMEOUT_MS);
     deps.pendingAuthorizationTimers.set(cacheKey, timer);
     await adapter.sendMessage(chatId, renderAuthorizationPrompt(pending)).catch(() => {});
@@ -571,7 +571,7 @@ export async function handlePermissionUpdatedEvent(
     const current = deps.chatPendingAuthorization.get(cacheKey);
     if (!current || current.permissionID !== permissionID) return;
     clearPendingAuthorizationForChat(deps, cacheKey);
-    await adapter.sendMessage(chatId, '## Status\n⏰ 权限请求已超时未处理。').catch(() => {});
+    await adapter.sendMessage(chatId, '## Status\n⏰ Permission request timed out.').catch(() => {});
   }, AUTH_TIMEOUT_MS);
   deps.pendingAuthorizationTimers.set(cacheKey, timer);
 
@@ -614,10 +614,10 @@ export async function handlePermissionRepliedEvent(
   if (!adapter) return;
   const label =
     response === 'always'
-      ? '✅ 权限已设置为始终允许。'
+      ? '✅ Permission set to always allow.'
       : response === 'once'
-        ? '✅ 权限已允许一次，继续处理中。'
-        : '⚠️ 权限已拒绝。';
+        ? '✅ Permission allowed once. Continuing.'
+        : '⚠️ Permission denied.';
   await adapter.sendMessage(chatId, `## Status\n${label}`).catch(() => {});
 }
 
@@ -653,7 +653,7 @@ export async function handleQuestionRepliedEvent(
 
   const adapter = mux.get(pending.adapterKey);
   if (!adapter) return;
-  await adapter.sendMessage(pending.chatId, '## Status\n✅ 已收到问题选项，继续处理中。').catch(() => {});
+  await adapter.sendMessage(pending.chatId, '## Status\n✅ Got the question selection. Continuing.').catch(() => {});
 }
 
 export async function handleQuestionRejectedEvent(
@@ -675,7 +675,7 @@ export async function handleQuestionRejectedEvent(
   const adapter = mux.get(pending.adapterKey);
   if (!adapter) return;
   await adapter
-    .sendMessage(pending.chatId, '## Status\n⚠️ 本轮问题选择已被取消，请重新发起。')
+    .sendMessage(pending.chatId, '## Status\n⚠️ This question selection was cancelled. Ask again if needed.')
     .catch(() => {});
 }
 

@@ -96,10 +96,10 @@ function isLikelyPermissionBlockedError(err: unknown): boolean {
     msg.includes('not idle') ||
     msg.includes('already running') ||
     msg.includes('in progress') ||
-    msg.includes('会话忙') ||
-    msg.includes('需要权限') ||
-    msg.includes('等待授权') ||
-    msg.includes('等待确认')
+    msg.includes('busy') ||
+    msg.includes('permission needed') ||
+    msg.includes('waiting for authorization') ||
+    msg.includes('waiting for confirmation')
   );
 }
 
@@ -304,7 +304,7 @@ export const createIncomingHandlerWithDeps = (
             await adapter
               .sendMessage(
                 chatId,
-                `## Status\n⚠️ 事件流异常，已从会话回放最近回复：\n\n${clipped}`,
+                `## Status\n⚠️ Event stream error; replayed the latest reply from the session:\n\n${clipped}`,
               )
               .catch(() => {});
             bridgeLogger.info(
@@ -341,7 +341,7 @@ export const createIncomingHandlerWithDeps = (
           chatId,
           senderId,
           sessionId,
-          blockedReason: reason || '需要网页权限确认',
+          blockedReason: reason || 'requires web permission confirmation',
           source,
           deferredParts: cloneParts(deferredParts),
           createdAt: Date.now(),
@@ -377,7 +377,7 @@ export const createIncomingHandlerWithDeps = (
       };
 
       const sendUnsupported = async () => {
-        await sendCommandMessage(`❌ 命令 /${slash?.command} 暂不支持在聊天中使用。`);
+        await sendCommandMessage(`❌ Command /${slash?.command} is not supported in chat.`);
       };
 
       const sendLocalFile = async (filePath: string): Promise<boolean | null> => {
@@ -484,7 +484,7 @@ export const createIncomingHandlerWithDeps = (
           ) {
             if (!pendingAuthorization.permissionID) {
               deps.clearPendingAuthorizationForChat(cacheKey);
-              await adapter.sendMessage(chatId, `${ERROR_HEADER}\n权限请求缺少 permissionID，已取消。`);
+              await adapter.sendMessage(chatId, `${ERROR_HEADER}\nPermission request is missing permissionID; cancelled.`);
               return;
             }
             await replyPermissionRequest(
@@ -640,7 +640,7 @@ export const createIncomingHandlerWithDeps = (
                   targetSessionId,
                   'bridge.question.resume',
                   resumeParts,
-                  extractErrorMessage(submitErr) || '当前会话需要网页权限确认',
+                  extractErrorMessage(submitErr) || 'the current session requires web permission confirmation',
                 );
               } else {
                 const nextSessionId = await createNewSession();
@@ -704,16 +704,16 @@ export const createIncomingHandlerWithDeps = (
           deps.chatAwaitingSaveFile.delete(cacheKey);
           const lines: string[] = ['## Status'];
           if (saved.length > 0) {
-            lines.push(`✅ 文件已保存：\n${saved.map(p => `- ${p}`).join('\n')}`);
+            lines.push(`✅ File saved:\n${saved.map(p => `- ${p}`).join('\n')}`);
           }
           if (duplicated.length > 0) {
-            lines.push(`🟡 文件已存在：\n${duplicated.map(p => `- ${p}`).join('\n')}`);
+            lines.push(`🟡 File already exists:\n${duplicated.map(p => `- ${p}`).join('\n')}`);
           }
           if (failed > 0) {
-            lines.push('❌ 部分文件保存失败，请重试 /savefile');
+            lines.push('❌ Some files failed to save. Retry /savefile');
           }
           if (saved.length === 0 && duplicated.length === 0 && failed === 0) {
-            lines.push('❌ 未检测到可保存文件，请重试 /savefile');
+            lines.push('❌ No savable files detected. Retry /savefile');
           }
           await adapter.sendMessage(chatId, lines.join('\n'));
           return;
@@ -726,21 +726,21 @@ export const createIncomingHandlerWithDeps = (
           const lines: string[] = [];
           if (saved.length > 0 && failed === 0 && duplicated.length === 0) {
             lines.push(
-              `## Status\n✅ 图片/文件保存成功：\n${saved
+              `## Status\n✅ Image/file saved:\n${saved
                 .map(p => `- ${p}`)
-                .join('\n')}\n⏳ 等候指令。`,
+                .join('\n')}\n⏳ Waiting for your next command.`,
             );
           } else if (saved.length === 0 && duplicated.length === 0) {
-            lines.push('## Status\n❌ 文件上传失败，请重试。');
+            lines.push('## Status\n❌ File upload failed. Try again.');
           } else {
             lines.push('## Status');
             if (saved.length > 0) {
-              lines.push(`✅ 已保存：\n${saved.map(p => `- ${p}`).join('\n')}`);
+              lines.push(`✅ Saved:\n${saved.map(p => `- ${p}`).join('\n')}`);
             }
             if (duplicated.length > 0) {
-              lines.push(`🟡 已存在，未重复入队：\n${duplicated.map(p => `- ${p}`).join('\n')}`);
+              lines.push(`🟡 Already exists; not queued again:\n${duplicated.map(p => `- ${p}`).join('\n')}`);
             }
-            if (failed > 0) lines.push('❌ 部分文件上传失败，请重试。');
+            if (failed > 0) lines.push('❌ Some file uploads failed. Try again.');
           }
 
           const content = lines.join('\n');
@@ -799,7 +799,7 @@ export const createIncomingHandlerWithDeps = (
           sessionId,
           'bridge.incoming',
           partList,
-          extractErrorMessage(submitErr) || '当前会话需要网页权限确认',
+          extractErrorMessage(submitErr) || 'the current session requires web permission confirmation',
         );
         return;
       }

@@ -503,12 +503,12 @@ function renderQuestionBlock(question: NormalizedQuestionItem, index: number): s
       if (option.description) lines.push(`   - ${option.description}`);
     });
     if (question.freeText) {
-      lines.push('也可直接输入自定义答案。');
+      lines.push('You can also type a custom answer.');
     }
     return lines;
   }
   if (question.freeText) {
-    lines.push('请直接回复你的答案（文本输入）。');
+    lines.push('Please reply directly with your answer (text input).');
     return lines;
   }
   return lines;
@@ -521,8 +521,8 @@ export function renderQuestionPrompt(state: PendingQuestionState): string {
   lines.push('## Question');
   lines.push(
     hasFreeText
-      ? '检测到本轮需要你回答问题，请直接回复答案：'
-      : '检测到本轮需要你选择选项，请直接回复答案：',
+      ? 'This turn needs your answer. Reply directly:'
+      : 'This turn needs you to pick an option. Reply directly:',
   );
   lines.push('');
 
@@ -531,21 +531,21 @@ export function renderQuestionPrompt(state: PendingQuestionState): string {
     lines.push('');
   });
   if (hasAutoSingleOption) {
-    lines.push('说明：只有一个可选项的问题会自动选择，你只需回答文本/多选项问题。');
+    lines.push('Note: single-option questions are selected automatically; you only answer text/multi-option questions.');
     lines.push('');
   }
 
   if (state.payload.questions.length === 1) {
     const q = state.payload.questions[0];
     if (q.freeText) {
-      lines.push('回复示例：`你的 workspace_id`');
+      lines.push('Example reply: `your workspace_id`');
     } else {
-      lines.push('回复示例：`1` 或 `选项文本`');
+      lines.push('Example reply: `1` or option text');
     }
   } else {
-    lines.push('回复示例：`Q1:2,Q2:你的答案` 或 `2,你的答案`');
+    lines.push('Example reply: `Q1:2,Q2:your answer` or `2,your answer`');
   }
-  lines.push('15分钟内未回复将自动取消本轮提问。');
+  lines.push('No reply within 15 minutes automatically cancels this question.');
 
   return lines.join('\n');
 }
@@ -555,20 +555,20 @@ export function renderReplyHint(state: PendingQuestionState): string {
   const hasOptions = state.payload.questions.some(q => q.options.length > 0);
   if (hasFreeText && hasOptions) {
     if (state.payload.questions.length === 1) {
-      return '未识别你的答案，可回复选项序号/选项文本，或直接输入自定义答案。';
+      return 'I did not recognize your answer. Reply with the option number/text, or type a custom answer.';
     }
-    return '未识别你的答案，请按 `Q1:1,Q2:你的答案` 回复；可选题也支持直接输入自定义答案。';
+    return 'I did not recognize your answer. Reply like `Q1:1,Q2:your answer`; choice questions also accept custom answers.';
   }
   if (hasFreeText) {
     if (state.payload.questions.length === 1) {
-      return '未识别你的答案，请直接回复文本答案。';
+      return 'I did not recognize your answer. Reply directly with the text answer.';
     }
-    return '未识别你的答案，请回复 `Q1:2,Q2:你的答案`（或按顺序 `2,你的答案`）。';
+    return 'I did not recognize your answer. Reply `Q1:2,Q2:your answer` (or in order `2,your answer`).';
   }
   if (state.payload.questions.length === 1) {
-    return '未识别你的答案，请回复 `1`/`2`/`3` 或直接回复选项文本。';
+    return 'I did not recognize your answer. Reply `1`/`2`/`3` or the option text.';
   }
-  return '未识别你的答案，请回复 `Q1:2,Q2:1`（或按顺序 `2,1`），也可用选项文本。';
+  return 'I did not recognize your answer. Reply `Q1:2,Q2:1` (or in order `2,1`), or use the option text.';
 }
 
 export function renderAnswerSummary(
@@ -579,7 +579,7 @@ export function renderAnswerSummary(
   const lines: string[] = [];
   lines.push('## Status');
   lines.push(
-    source === 'timeout' ? '⏰ 超时，本轮提问已取消。' : '✅ 已收到你的选择，继续处理中。',
+    source === 'timeout' ? '⏰ Timed out; this question was cancelled.' : '✅ Got your selection. Continuing.',
   );
   answers.forEach(ans => {
     const q = state.payload.questions[ans.questionIndex];

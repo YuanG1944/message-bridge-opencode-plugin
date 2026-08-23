@@ -290,26 +290,26 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     const lines: string[] = [];
     lines.push('## Command');
     lines.push('### Help');
-    lines.push('/help - 查看命令与用法');
-    lines.push('/models - 查看可用模型（/models <序号> 切换）');
-    lines.push('/status - 查看桥接运行状态（PID/启动时间）');
-    lines.push('/new - 新建会话并切换');
-    lines.push('/rename <title> - 重命名当前会话');
-    lines.push('/abort - 强制终止当前会话生成');
-    lines.push('/reset (/restart) - 清空桥接运行态并新建会话');
-    lines.push('/sessions - 列出会话（用 /sessions <id> 或 /sessions <序号> 切换）');
-    lines.push('/sessions delete 1,2,3 - 批量删除会话（序号或id）');
-    lines.push('/sessions delete all - 删除全部会话，仅保留当前会话');
-    lines.push('/maxFileSize <xmb> - 设置上传文件大小限制（默认10MB）');
-    lines.push('/maxFileRetry <n> - 设置资源下载重试次数（默认3）');
-    lines.push('/savefile - 上传并保存文件到本地（不经过大模型）');
-    lines.push('/sendfile <path> - 直接通过 Bot 回传本地文件（强触发）');
-    lines.push('/share - 分享当前会话');
-    lines.push('/unshare - 取消分享');
-    lines.push('/compact - 压缩/总结当前会话');
-    lines.push('/init - 初始化项目（生成 AGENTS.md）');
-    lines.push('/agent - 列出 Agents');
-    lines.push('/agent <序号|name> - 切换 Agent（序号或精确名称）');
+    lines.push('/help - view commands and usage');
+    lines.push('/models - view available models (/models <number> to switch)');
+    lines.push('/status - view bridge runtime status (PID/start time)');
+    lines.push('/new - create and switch to a new session');
+    lines.push('/rename <title> - rename the current session');
+    lines.push('/abort - force-stop the current session generation');
+    lines.push('/reset (/restart) - clear bridge runtime state and create a new session');
+    lines.push('/sessions - list sessions (switch with /sessions <id> or /sessions <number>)');
+    lines.push('/sessions delete 1,2,3 - delete sessions in bulk (number or id)');
+    lines.push('/sessions delete all - delete all sessions, keep only the current one');
+    lines.push('/maxFileSize <xmb> - set upload file size limit (default 10MB)');
+    lines.push('/maxFileRetry <n> - set resource download retry count (default 3)');
+    lines.push('/savefile - upload and save a file locally (bypasses the model)');
+    lines.push('/sendfile <path> - send a local file back through the bot (force)');
+    lines.push('/share - share the current session');
+    lines.push('/unshare - stop sharing');
+    lines.push('/compact - compact/summarize the current session');
+    lines.push('/init - initialize the project (generate AGENTS.md)');
+    lines.push('/agent - list Agents');
+    lines.push('/agent <number|name> - switch Agent (number or exact name)');
 
     if (list.length > 0) {
       lines.push('### Custom Commands');
@@ -387,7 +387,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     const { providers, defaults } = parseProvidersResponse(res);
 
     if (!Array.isArray(providers) || providers.length === 0) {
-      await sendCommandMessage('暂无可用模型信息。');
+      await sendCommandMessage('No model info available.');
       return true;
     }
 
@@ -395,19 +395,19 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
       const arg = slash.arguments.trim();
       const m = arg.match(/^(\d+)\.(\d+)$/);
       if (!m) {
-        await sendCommandMessage('❌ 无效序号，请使用 /models 1.2');
+        await sendCommandMessage('❌ Invalid number. Use e.g. /models 1.2');
         return true;
       }
       const pIdx = Number(m[1]) - 1;
       const mIdx = Number(m[2]) - 1;
       if (pIdx < 0 || mIdx < 0 || pIdx >= providers.length) {
-        await sendCommandMessage(`❌ 无效序号: ${arg}`);
+        await sendCommandMessage(`❌ Invalid number: ${arg}`);
         return true;
       }
       const p = providers[pIdx];
       const modelKeys = Object.keys(p?.models || {});
       if (mIdx >= modelKeys.length) {
-        await sendCommandMessage(`❌ 无效序号: ${arg}`);
+        await sendCommandMessage(`❌ Invalid number: ${arg}`);
         return true;
       }
       const key = modelKeys[mIdx];
@@ -415,11 +415,11 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
       const modelId = model?.id;
       const providerID = model?.providerID || p?.id;
       if (!modelId) {
-        await sendCommandMessage(`❌ 模型ID缺失: ${arg}`);
+        await sendCommandMessage(`❌ Missing model ID: ${arg}`);
         return true;
       }
       if (!providerID) {
-        await sendCommandMessage(`❌ ProviderID缺失: ${arg}`);
+        await sendCommandMessage(`❌ Missing provider ID: ${arg}`);
         return true;
       }
 
@@ -434,7 +434,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
         path: { id: sessionId },
         body: { command: 'model', arguments: modelId },
       });
-      await sendCommandMessage(`✅ 已切换模型: ${model?.name || modelId} (${providerID})`);
+      await sendCommandMessage(`✅ Switched model: ${model?.name || modelId} (${providerID})`);
       return true;
     }
 
@@ -465,59 +465,59 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
   if (normalizedCommand === 'maxfilesize') {
     const current = chatMaxFileSizeMb.get(chatId) ?? DEFAULT_MAX_FILE_MB;
     if (!slash.arguments) {
-      await sendCommandMessage(`当前文件大小限制：${current}MB`);
+      await sendCommandMessage(`Current file size limit: ${current}MB`);
       return true;
     }
     const m = slash.arguments.trim().match(/(\d+(?:\.\d+)?)/);
     const value = m ? Number(m[1]) : NaN;
     if (!Number.isFinite(value) || value <= 0) {
-      await sendCommandMessage('❌ 请输入有效数值，例如 /maxFileSize 10');
+      await sendCommandMessage('❌ Enter a valid number, e.g. /maxFileSize 10');
       return true;
     }
     chatMaxFileSizeMb.set(chatId, value);
-    await sendCommandMessage(`✅ 已设置文件大小限制：${value}MB`);
+    await sendCommandMessage(`✅ File size limit set: ${value}MB`);
     return true;
   }
 
   if (normalizedCommand === 'maxfileretry') {
     const current = chatMaxFileRetry.get(chatId) ?? DEFAULT_MAX_FILE_RETRY;
     if (!slash.arguments) {
-      await sendCommandMessage(`当前重试次数：${current}`);
+      await sendCommandMessage(`Current retry count: ${current}`);
       return true;
     }
     const m = slash.arguments.trim().match(/(\d+)/);
     const value = m ? Number(m[1]) : NaN;
     if (!Number.isFinite(value) || value < 0) {
-      await sendCommandMessage('❌ 请输入有效整数，例如 /maxFileRetry 3');
+      await sendCommandMessage('❌ Enter a valid integer, e.g. /maxFileRetry 3');
       return true;
     }
     chatMaxFileRetry.set(chatId, value);
-    await sendCommandMessage(`✅ 已设置重试次数：${value}`);
+    await sendCommandMessage(`✅ Retry count set: ${value}`);
     return true;
   }
 
   if (normalizedCommand === 'sendfile') {
     const parsedPath = parseSendFilePath(slash.arguments || '');
     if (!parsedPath) {
-      await sendCommandMessage('用法：/sendfile <path>');
+      await sendCommandMessage('Usage: /sendfile <path>');
       return true;
     }
     const ok = await sendLocalFile(parsedPath);
     if (ok === null) {
-      await sendCommandMessage('❌ 当前平台暂不支持 /sendfile。');
+      await sendCommandMessage('❌ /sendfile is not supported on this platform.');
       return true;
     }
     if (ok) {
-      await sendCommandMessage(`✅ 文件已发送：${parsedPath}`);
+      await sendCommandMessage(`✅ File sent: ${parsedPath}`);
       return true;
     }
-    await sendCommandMessage(`❌ 文件发送失败：${parsedPath}`);
+    await sendCommandMessage(`❌ Failed to send file: ${parsedPath}`);
     return true;
   }
 
   if (normalizedCommand === 'savefile') {
     chatAwaitingSaveFile.set(cacheKey, true);
-    await sendCommandMessage('请上传文件，我会直接保存到本地并返回路径（不经过大模型）。');
+    await sendCommandMessage('Upload a file; I will save it locally and return the path (bypassing the model).');
     return true;
   }
 
@@ -526,12 +526,12 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
       const list = chatAgentList.get(cacheKey) || [];
       const idx = Number(targetAgent) - 1;
       if (idx < 0 || idx >= list.length) {
-        await sendCommandMessage(`❌ 无效序号: ${targetAgent}`);
+        await sendCommandMessage(`❌ Invalid number: ${targetAgent}`);
         return true;
       }
       const agent = list[idx];
       chatAgent.set(cacheKey, agent.id);
-      await sendCommandMessage(`✅ 已切换 Agent: ${agent.name || agent.id} (${agent.id})`);
+      await sendCommandMessage(`✅ Switched Agent: ${agent.name || agent.id} (${agent.id})`);
       return true;
     }
 
@@ -539,12 +539,12 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     const list = pickUsableAgents(toApiArray(res, ['agents', 'items', 'list']));
     const exact = list.find(a => a.name === targetAgent || a.id === targetAgent);
     if (!exact) {
-      await sendCommandMessage(`❌ 未找到 Agent: ${targetAgent}`);
+      await sendCommandMessage(`❌ Agent not found: ${targetAgent}`);
       return true;
     }
     const pickedId = exact.id;
     chatAgent.set(cacheKey, pickedId);
-    await sendCommandMessage(`✅ 已切换 Agent: ${exact.name || pickedId} (${pickedId})`);
+    await sendCommandMessage(`✅ Switched Agent: ${exact.name || pickedId} (${pickedId})`);
     return true;
   }
 
@@ -552,14 +552,14 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     const res = await api.app.agents();
     const list = pickUsableAgents(toApiArray(res, ['agents', 'items', 'list']));
     if (list.length === 0) {
-      await sendCommandMessage('暂无可用 Agent。');
+      await sendCommandMessage('No Agents available.');
       return true;
     }
     const agents = list.slice(0, 20);
     chatAgentList.set(cacheKey, agents);
-    const lines = ['## Command', '### Agents', '请输入 /agent <序号> 或 <name> 切换：'];
+    const lines = ['## Command', '### Agents', 'Enter /agent <number> or <name> to switch:'];
     const current = chatAgent.get(cacheKey);
-    if (current) lines.push(`当前: ${current}`);
+    if (current) lines.push(`Current: ${current}`);
     agents.forEach((a, idx) => {
       lines.push(`${idx + 1}. ${a.name} (${a.id})`);
     });
@@ -574,7 +574,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
       const listRes = await api.session.list({});
       const sessions = toSessionList(toApiArray(listRes, ['sessions', 'items', 'list']));
       if (sessions.length === 0) {
-        await sendCommandMessage('暂无会话可删除。');
+        await sendCommandMessage('No sessions to delete.');
         return true;
       }
 
@@ -584,7 +584,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
         : resolveSessionRefs(del.refs, sessions).filter(id => id !== currentSessionId);
 
       if (targets.length === 0) {
-        await sendCommandMessage('没有可删除的会话（当前会话会被保留）。');
+        await sendCommandMessage('No sessions to delete (the current session is kept).');
         return true;
       }
 
@@ -605,9 +605,9 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
       );
 
       const okCount = targets.length - failed.length;
-      const lines = [`✅ 已删除会话 ${okCount} 个。`];
-      if (failed.length > 0) lines.push(`❌ 删除失败 ${failed.length} 个：${failed.join(', ')}`);
-      if (del.deleteAll) lines.push(`保留当前会话：${currentSessionId}`);
+      const lines = [`✅ Deleted ${okCount} session(s).`];
+      if (failed.length > 0) lines.push(`❌ Failed to delete ${failed.length}: ${failed.join(', ')}`);
+      if (del.deleteAll) lines.push(`Kept current session: ${currentSessionId}`);
       await sendCommandMessage(lines.join('\n'));
       return true;
     }
@@ -615,7 +615,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     const res = await api.session.list({});
     const sessions = asNamedRecords(toApiArray(res, ['sessions', 'items', 'list']));
     if (sessions.length === 0) {
-      await sendCommandMessage('暂无会话，请使用 /new 创建。');
+      await sendCommandMessage('No sessions. Create one with /new.');
       return true;
     }
     const list = sessions
@@ -623,7 +623,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
       .map(s => ({ id: s.id, title: s.title || 'Untitled' }))
       .filter((s): s is { id: string; title: string } => Boolean(s.id));
     chatSessionList.set(cacheKey, list);
-    const lines = ['## Command', '### Sessions', '请输入 /sessions <序号> 切换：'];
+    const lines = ['## Command', '### Sessions', 'Enter /sessions <number> to switch:'];
     list.forEach((s, idx) => {
       lines.push(`${idx + 1}. ${s.title}`);
     });
@@ -639,7 +639,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
       if (idx >= 0 && idx < list.length) {
         targetId = list[idx].id;
       } else {
-        await sendCommandMessage(`❌ 无效序号: ${targetSessionId}`);
+        await sendCommandMessage(`❌ Invalid number: ${targetSessionId}`);
         return true;
       }
     }
@@ -650,7 +650,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     chatModel.delete(cacheKey);
     clearPendingQuestionForChat(cacheKey);
     clearPendingAuthorizationForChat(cacheKey);
-    await sendCommandMessage(`✅ 已切换到会话: ${targetId}`);
+    await sendCommandMessage(`✅ Switched to session: ${targetId}`);
     return true;
   }
 
@@ -658,35 +658,35 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     const sessionId = await ensureSession();
     const res = await api.session.share({ path: { id: sessionId } });
     const url = extractShareUrl(res);
-    await sendCommandMessage(url ? `✅ 分享链接: ${url}` : '✅ 已分享会话。');
+    await sendCommandMessage(url ? `✅ Share link: ${url}` : '✅ Session shared.');
     return true;
   }
 
   if (normalizedCommand === 'unshare') {
     const sessionId = await ensureSession();
     await api.session.unshare({ path: { id: sessionId } });
-    await sendCommandMessage('✅ 已取消分享。');
+    await sendCommandMessage('✅ Share cancelled.');
     return true;
   }
 
   if (normalizedCommand === 'compact') {
     const sessionId = await ensureSession();
     await api.session.summarize({ path: { id: sessionId } });
-    await sendCommandMessage('✅ 已触发会话压缩。');
+    await sendCommandMessage('✅ Session compaction triggered.');
     return true;
   }
 
   if (normalizedCommand === 'init') {
     const sessionId = await ensureSession();
     await api.session.init({ path: { id: sessionId } });
-    await sendCommandMessage('✅ 已触发初始化（AGENTS.md）。');
+    await sendCommandMessage('✅ Initialization triggered (AGENTS.md).');
     return true;
   }
 
   if (normalizedCommand === 'rename') {
     const nextTitle = slash.arguments.trim();
     if (!nextTitle) {
-      await sendCommandMessage('用法：/rename <新会话名称>');
+      await sendCommandMessage('Usage: /rename <new session name>');
       return true;
     }
 
@@ -707,18 +707,18 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     }
 
     if (uniqueTitle !== nextTitle) {
-      await sendCommandMessage(`✅ 会话名重复，已自动重命名为：${uniqueTitle}`);
+      await sendCommandMessage(`✅ Name taken; auto-renamed to: ${uniqueTitle}`);
       return true;
     }
 
-    await sendCommandMessage(`✅ 已重命名当前会话：${uniqueTitle}`);
+    await sendCommandMessage(`✅ Renamed current session: ${uniqueTitle}`);
     return true;
   }
 
   if (normalizedCommand === 'abort') {
     const sessionId = await ensureSession();
     await api.session.abort({ path: { id: sessionId } });
-    await sendCommandMessage(`🛑 已请求终止当前会话生成：${sessionId}`);
+    await sendCommandMessage(`🛑 Stop requested for session: ${sessionId}`);
     return true;
   }
 
@@ -727,9 +727,9 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     clearPendingAuthorizationForChat(cacheKey);
     const sessionId = await createNewSession();
     if (sessionId) {
-      await sendCommandMessage(`✅ 已切换到新会话: ${sessionId}`);
+      await sendCommandMessage(`✅ Switched to new session: ${sessionId}`);
     } else {
-      await sendCommandMessage('❌ 新会话创建失败，请稍后重试。');
+      await sendCommandMessage('❌ Failed to create a new session. Try again later.');
     }
     return true;
   }
@@ -743,7 +743,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
     clearPendingQuestionForChat(cacheKey);
     clearPendingAuthorizationForChat(cacheKey);
     chatAwaitingSaveFile.delete(cacheKey);
-    await sendCommandMessage(`✅ 已清空当前会话上下文: ${sessionId}`);
+    await sendCommandMessage(`✅ Cleared current session context: ${sessionId}`);
     return true;
   }
 
@@ -773,9 +773,9 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
 
     const sessionId = await createNewSession();
     if (sessionId) {
-      await sendCommandMessage(`✅ 桥接系统已重置（当前会话: ${sessionId}）`);
+      await sendCommandMessage(`✅ Bridge system reset (current session: ${sessionId})`);
     } else {
-      await sendCommandMessage('⚠️ 桥接状态已清空，但新会话创建失败，请重试 /new');
+      await sendCommandMessage('⚠️ Bridge state cleared, but creating a new session failed. Retry /new');
     }
     return true;
   }
@@ -800,7 +800,7 @@ export async function handleSlashCommand(ctx: CommandContext): Promise<boolean> 
   const sessionId = await ensureSession();
   const isCustom = await isKnownCustomCommand(slash.command);
   if (isCustom === false) {
-    await sendCommandMessage(`❌ 无效指令: /${slash.command}`);
+    await sendCommandMessage(`❌ Invalid command: /${slash.command}`);
     return true;
   }
   await api.session.command({
